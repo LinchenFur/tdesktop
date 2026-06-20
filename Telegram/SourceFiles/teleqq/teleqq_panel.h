@@ -11,15 +11,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "teleqq/teleqq_store.h"
 #include "base/basic_types.h"
 
+#include <QtCore/QRect>
 #include <QtWidgets/QWidget>
 
-class QCheckBox;
-class QLabel;
+#include <vector>
+
 class QLineEdit;
-class QListWidget;
-class QListWidgetItem;
+class QMouseEvent;
+class QPaintEvent;
 class QPushButton;
-class QTextEdit;
+class QResizeEvent;
 
 namespace TeleQQ {
 
@@ -36,6 +37,11 @@ public:
 	void setStatusText(const QString &status);
 	void connectCurrent();
 
+protected:
+	void paintEvent(QPaintEvent *e) override;
+	void resizeEvent(QResizeEvent *e) override;
+	void mousePressEvent(QMouseEvent *e) override;
+
 private:
 	void setupUi();
 	void loadSavedOptions();
@@ -43,24 +49,25 @@ private:
 	[[nodiscard]] NapcatClient::Options currentOptions() const;
 	void selectChat(const QString &chatId);
 	void sendCurrentText();
-	void upsertChatRow(const Chat &chat);
-	[[nodiscard]] QString currentChatId() const;
-	[[nodiscard]] QString renderChatRow(const Chat &chat) const;
-	[[nodiscard]] QString renderMessageLine(const Message &message) const;
+	void updateLayout();
+	[[nodiscard]] QString selectedChatTitle() const;
+	[[nodiscard]] QRect chatRowRect(int index) const;
+	[[nodiscard]] int chatIndexAt(const QPoint &position) const;
 
 	not_null<Store*> _store;
 	not_null<NapcatClient*> _client;
-	QLineEdit *_endpoint = nullptr;
-	QLineEdit *_token = nullptr;
-	QCheckBox *_reconnect = nullptr;
-	QLabel *_status = nullptr;
-	QPushButton *_connect = nullptr;
-	QPushButton *_disconnect = nullptr;
-	QListWidget *_chats = nullptr;
-	QTextEdit *_messages = nullptr;
 	QLineEdit *_composer = nullptr;
 	QPushButton *_send = nullptr;
+	QString _endpoint;
+	QString _token;
+	bool _reconnect = true;
+	QString _status = u"connected"_q;
 	QString _selectedChatId;
+	std::vector<Chat> _chats;
+	QRect _dialogsRect;
+	QRect _historyRect;
+	QRect _topBarRect;
+	QRect _composerRect;
 };
 
 } // namespace TeleQQ

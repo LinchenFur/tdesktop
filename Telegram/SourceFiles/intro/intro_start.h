@@ -40,10 +40,12 @@ private:
 	void loadSavedOptions();
 	void saveCurrentOptions() const;
 	void updateControlsGeometry();
+	void handleStatus(const QString &status);
 
 	object_ptr<Ui::InputField> _endpoint;
 	object_ptr<Ui::PasswordInput> _token;
 	rpl::event_stream<> _nextButtonFocusRequests;
+	bool _connecting = false;
 
 };
 

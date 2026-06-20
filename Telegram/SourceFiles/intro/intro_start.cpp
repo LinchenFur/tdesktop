@@ -68,6 +68,10 @@ StartWidget::StartWidget(
 }
 
 void StartWidget::submit() {
+	if (_connecting) {
+		return;
+	}
+
 	auto endpoint = NormalizeEndpoint(_endpoint->getLastText());
 	if (endpoint.isEmpty() || endpoint == u"ws://"_q) {
 		_endpoint->showError();
@@ -79,10 +83,10 @@ void StartWidget::submit() {
 	const auto url = QUrl(endpoint);
 	const auto scheme = url.scheme();
 	if (!url.isValid()
-		|| (scheme != u"ws"_q && scheme != u"wss"_q)
+		|| scheme != u"ws"_q
 		|| url.host().isEmpty()) {
 		_endpoint->showError();
-		showError(rpl::single(u"WebSocket 地址需要是 ws:// 或 wss://。"_q));
+		showError(rpl::single(u"WebSocket 地址需要是 ws://。"_q));
 		_endpoint->setFocusFast();
 		return;
 	}
@@ -91,15 +95,17 @@ void StartWidget::submit() {
 	saveCurrentOptions();
 
 	if (const auto client = Core::App().teleqqClient()) {
+		_connecting = true;
+		showError(rpl::single(u"正在连接 NapCat..."_q));
+		client->addStatusCallback([=](QString status) {
+			handleStatus(status);
+		});
 		client->disconnectFromHost();
 		client->connectTo({
 			.endpoint = url,
 			.token = _token->getLastText().trimmed(),
 			.reconnect = true,
 		});
-	}
-	if (const auto window = Core::App().activePrimaryWindow()) {
-		window->widget()->setupTeleqq({});
 	}
 }
 
@@ -129,10 +135,29 @@ void StartWidget::resizeEvent(QResizeEvent *e) {
 
 void StartWidget::updateControlsGeometry() {
 	const auto firstTop = contentTop() + st::introStepFieldTop;
+	_endpoint->resize(st::introCountry.width, _endpoint->height());
+	_token->resize(st::introCountry.width, _token->height());
 	_endpoint->moveToLeft(contentLeft(), firstTop);
 	_token->moveToLeft(
 		contentLeft(),
 		firstTop + _endpoint->height() + st::introPhoneTop);
+}
+
+void StartWidget::handleStatus(const QString &status) {
+	if (!_connecting) {
+		return;
+	}
+	if (status == u"connected"_q) {
+		_connecting = false;
+		hideError();
+		if (const auto window = Core::App().activePrimaryWindow()) {
+			window->widget()->setupTeleqq({});
+		}
+	} else if (status.startsWith(u"error:"_q)) {
+		_connecting = false;
+		showError(rpl::single(u"NapCat 连接失败："_q + status));
+		_endpoint->setFocusFast();
+	}
 }
 
 void StartWidget::loadSavedOptions() {
