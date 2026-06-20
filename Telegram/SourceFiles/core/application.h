@@ -105,6 +105,11 @@ namespace Calls {
 class Instance;
 } // namespace Calls
 
+namespace TeleQQ {
+class NapcatClient;
+class Store;
+} // namespace TeleQQ
+
 namespace Webrtc {
 class Environment;
 } // namespace Webrtc
@@ -162,6 +167,8 @@ public:
 	[[nodiscard]] base::BatterySaving &batterySaving() const {
 		return *_batterySaving;
 	}
+	[[nodiscard]] TeleQQ::Store *teleqqStore() const;
+	[[nodiscard]] TeleQQ::NapcatClient *teleqqClient() const;
 
 	// Windows interface.
 	bool hasActiveWindow(not_null<Main::Session*> session) const;

@@ -92,8 +92,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/accessible/ui_accessible_factory.h"
 #include "ui/boxes/confirm_box.h"
 #include "core/cached_webview_availability.h"
+#include "teleqq/teleqq_napcat_client.h"
+#include "teleqq/teleqq_store.h"
 #include "styles/style_window.h"
 
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QMimeDatabase>
 #include <QtGui/QGuiApplication>
@@ -149,6 +153,8 @@ struct Application::Private {
 	UiIntegration uiIntegration;
 	Settings settings;
 	std::unique_ptr<ProxyRotationManager> proxyRotation;
+	std::unique_ptr<TeleQQ::Store> teleqqStore;
+	std::unique_ptr<TeleQQ::NapcatClient> teleqq;
 };
 
 Application::Application()
@@ -326,6 +332,56 @@ void Application::run() {
 
 	DEBUG_LOG(("Application Info: inited..."));
 
+	_private->teleqqStore = std::make_unique<TeleQQ::Store>();
+	_private->teleqqStore->setChatUpdatedCallback([](TeleQQ::Chat chat) {
+		DEBUG_LOG(("TeleQQ: chat %1 title %2 unread %3").arg(
+			chat.id,
+			chat.title,
+			QString::number(chat.unread)));
+	});
+	_private->teleqqStore->setMessageAddedCallback([](
+			TeleQQ::Message message) {
+		DEBUG_LOG(("TeleQQ: stored message %1 in %2").arg(
+			message.id,
+			message.chatId));
+	});
+
+	_private->teleqq = std::make_unique<TeleQQ::NapcatClient>(this);
+	_private->teleqq->setStatusCallback([=](QString status) {
+		LOG(("TeleQQ: NapCat status %1").arg(status));
+		if (status == u"connected"_q) {
+			_private->teleqq->requestFriendList([=](
+					TeleQQ::RosterResult result) {
+				LOG(("TeleQQ: loaded %1 friends from NapCat").arg(
+					QString::number(int(result.chats.size()))));
+				_private->teleqqStore->upsertChats(
+					std::move(result.chats));
+			});
+			_private->teleqq->requestGroupList([=](
+					TeleQQ::RosterResult result) {
+				LOG(("TeleQQ: loaded %1 groups from NapCat").arg(
+					QString::number(int(result.chats.size()))));
+				_private->teleqqStore->upsertChats(
+					std::move(result.chats));
+			});
+		}
+	});
+	_private->teleqq->setEventCallback([](QJsonObject event) {
+		DEBUG_LOG(("TeleQQ: event %1").arg(QString::fromUtf8(
+			QJsonDocument(event).toJson(QJsonDocument::Compact))));
+	});
+	_private->teleqq->setMessageCallback([=](
+			TeleQQ::Chat chat,
+			TeleQQ::Message message) {
+		DEBUG_LOG(("TeleQQ: message %1 from %2 in %3").arg(
+			message.id,
+			message.author,
+			message.chatId));
+		_private->teleqqStore->addMessage(
+			std::move(chat),
+			std::move(message));
+	});
+
 	DEBUG_LOG(("Application Info: starting app..."));
 
 	// Create mime database, so it won't be slow later.
@@ -339,36 +395,6 @@ void Application::run() {
 	setLastActiveWindow(_windows.front().second.get());
 	_windowInSettings = _lastActivePrimaryWindow = _lastActiveWindow;
 
-	_domain->activeChanges(
-	) | rpl::on_next([=](not_null<Main::Account*> account) {
-		showAccount(account);
-	}, _lifetime);
-
-	(
-		_domain->activeValue(
-		) | rpl::to_empty | rpl::filter([=] {
-			return _domain->started();
-		}) | rpl::take(1)
-	) | rpl::then(
-		_domain->accountsChanges()
-	) | rpl::map([=] {
-		return (_domain->accounts().size() > Main::Domain::kMaxAccounts)
-			? _domain->activeChanges()
-			: rpl::never<not_null<Main::Account*>>();
-	}) | rpl::flatten_latest(
-	) | rpl::on_next([=](not_null<Main::Account*> account) {
-		const auto ordered = _domain->orderedAccounts();
-		const auto it = ranges::find(ordered, account);
-		if (_lastActivePrimaryWindow && it != end(ordered)) {
-			const auto index = std::distance(begin(ordered), it);
-			if ((index + 1) > _domain->maxAccounts()) {
-				_lastActivePrimaryWindow->show(Box(
-					AccountsLimitBox,
-					&account->session()));
-			}
-		}
-	}, _lifetime);
-
 	QCoreApplication::instance()->installEventFilter(this);
 
 	appDeactivatedValue(
@@ -380,48 +406,17 @@ void Application::run() {
 		}
 	}, _lifetime);
 
+	startSettingsAndBackground();
 	DEBUG_LOG(("Application Info: window created..."));
 
-	startDomain();
-	startTray();
-
+	_lastActivePrimaryWindow->widget()->setupTeleqq({});
 	_lastActivePrimaryWindow->firstShow();
-
-	startMediaView();
-
 	DEBUG_LOG(("Application Info: showing."));
 	_lastActivePrimaryWindow->finishFirstShow();
-
-	if (!_lastActivePrimaryWindow->locked() && cStartToSettings()) {
-		_lastActivePrimaryWindow->showSettings();
-	}
-
 	_lastActivePrimaryWindow->updateIsActiveFocus();
-
-	for (const auto &error : Shortcuts::Errors()) {
-		LOG(("Shortcuts Error: %1").arg(error));
-	}
-
 	SetCrashAnnotationsGL();
-	if (Ui::GL::LastCrashCheckFailed()) {
-		showOpenGLCrashNotification();
-	}
-
-	_openInMediaViewRequests.events(
-	) | rpl::on_next([=](Media::View::OpenRequest &&request) {
-		if (_mediaView) {
-			_mediaView->show(std::move(request));
-		}
-	}, _lifetime);
-	{
-		const auto countries = std::make_shared<Countries::Manager>(
-			_domain.get());
-		countries->lifetime().add([=] {
-			[[maybe_unused]] const auto countriesCopy = countries;
-		});
-	}
-
 	processCreatedWindow(_lastActivePrimaryWindow);
+	DEBUG_LOG(("Application Info: TeleQQ window mode started."));
 }
 
 void Application::autoRegisterUrlScheme() {
@@ -1369,6 +1364,14 @@ void Application::localPasscodeChanged() {
 	_shouldLockAt = 0;
 	_autoLockTimer.cancel();
 	checkAutoLock(crl::now());
+}
+
+TeleQQ::Store *Application::teleqqStore() const {
+	return _private->teleqqStore.get();
+}
+
+TeleQQ::NapcatClient *Application::teleqqClient() const {
+	return _private->teleqq.get();
 }
 
 bool Application::savingPositionFor(

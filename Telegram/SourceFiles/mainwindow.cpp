@@ -24,6 +24,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/sandbox.h"
 #include "core/application.h"
 #include "export/export_manager.h"
+#include "teleqq/teleqq_panel.h"
 #include "inline_bots/bot_attach_web_view.h" // AttachWebView::cancel.
 #include "intro/intro_widget.h"
 #include "main/main_session.h"
@@ -155,6 +156,8 @@ void MainWindow::finishFirstShow() {
 		_main->activate();
 	} else if (!_passcodeLock && !_setupEmailLock && _intro) {
 		_intro->setInnerFocus();
+	} else if (!_passcodeLock && !_setupEmailLock && _teleqq) {
+		_teleqq->setFocus();
 	}
 }
 
@@ -162,6 +165,7 @@ void MainWindow::clearWidgetsHook() {
 	_mediaPreview.destroy();
 	_main.destroy();
 	_intro.destroy();
+	_teleqq.destroy();
 	if (!Core::App().passcodeLocked()) {
 		_passcodeLock.destroy();
 	}
@@ -181,7 +185,7 @@ void MainWindow::preventOrInvoke(Fn<void()> callback) {
 }
 
 void MainWindow::setupPasscodeLock() {
-	auto animated = (_main || _intro);
+	auto animated = (_main || _intro || _teleqq);
 	auto oldContentCache = animated ? grabForSlideAnimation() : QPixmap();
 	_passcodeLock.create(bodyWidget(), &controller());
 	updateControlsGeometry();
@@ -192,6 +196,9 @@ void MainWindow::setupPasscodeLock() {
 	}
 	if (_intro) {
 		_intro->hide();
+	}
+	if (_teleqq) {
+		_teleqq->hide();
 	}
 	if (animated) {
 		_passcodeLock->showAnimated(std::move(oldContentCache));
@@ -205,7 +212,7 @@ void MainWindow::setupPasscodeLock() {
 }
 
 void MainWindow::setupSetupEmailLock() {
-	auto animated = (_main || _intro || _passcodeLock);
+	auto animated = (_main || _intro || _teleqq || _passcodeLock);
 	auto oldContentCache = animated ? grabForSlideAnimation() : QPixmap();
 	_setupEmailLock.create(bodyWidget(), &controller());
 	updateControlsGeometry();
@@ -216,6 +223,9 @@ void MainWindow::setupSetupEmailLock() {
 	}
 	if (_intro) {
 		_intro->hide();
+	}
+	if (_teleqq) {
+		_teleqq->hide();
 	}
 	if (_passcodeLock) {
 		_passcodeLock->hide();
@@ -251,11 +261,15 @@ void MainWindow::clearSetupEmailLock() {
 		updateControlsGeometry();
 		_main->showAnimated(std::move(oldContentCache), true);
 		Core::App().checkStartUrls();
+	} else if (_teleqq) {
+		_teleqq->show();
+		updateControlsGeometry();
+		setInnerFocus();
 	}
 }
 
 void MainWindow::clearPasscodeLock() {
-	Expects(_intro || _main);
+	Expects(_intro || _main || _teleqq);
 
 	if (!_passcodeLock) {
 		return;
@@ -276,6 +290,10 @@ void MainWindow::clearPasscodeLock() {
 		updateControlsGeometry();
 		_main->showAnimated(std::move(oldContentCache), true);
 		Core::App().checkStartUrls();
+	} else if (_teleqq) {
+		_teleqq->show();
+		updateControlsGeometry();
+		setInnerFocus();
 	}
 }
 
@@ -310,6 +328,29 @@ void MainWindow::setupIntro(
 		} else {
 			setInnerFocus();
 		}
+	}
+	fixOrder();
+}
+
+void MainWindow::setupTeleqq(QPixmap) {
+	destroyLayer();
+
+	const auto store = Core::App().teleqqStore();
+	const auto client = Core::App().teleqqClient();
+	Expects(store != nullptr);
+	Expects(client != nullptr);
+
+	auto created = object_ptr<TeleQQ::Panel>::fromRaw(
+		new TeleQQ::Panel(store, client, bodyWidget()));
+
+	clearWidgets();
+	_teleqq = std::move(created);
+	if (_passcodeLock || _setupEmailLock) {
+		_teleqq->hide();
+	} else {
+		_teleqq->show();
+		updateControlsGeometry();
+		_teleqq->setFocus();
 	}
 	fixOrder();
 }
@@ -613,6 +654,10 @@ void MainWindow::checkActivation() {
 
 bool MainWindow::contentOverlapped(const QRect &globalRect) {
 	return (_main && _main->contentOverlapped(globalRect))
+		|| (_teleqq
+			&& !_teleqq->isHidden()
+			&& QRect(_teleqq->mapToGlobal(_teleqq->rect().topLeft()),
+				_teleqq->size()).intersects(globalRect))
 		|| (_layer && _layer->contentOverlapped(globalRect));
 }
 
@@ -629,6 +674,8 @@ void MainWindow::setInnerFocus() {
 		_main->setInnerFocus();
 	} else if (_intro) {
 		_intro->setInnerFocus();
+	} else if (_teleqq) {
+		_teleqq->setFocus();
 	}
 }
 
@@ -763,6 +810,7 @@ void MainWindow::updateControlsGeometry() {
 			body.height() });
 	}
 	if (_intro) _intro->setGeometry(body);
+	if (_teleqq) _teleqq->setGeometry(body);
 	if (_layer) _layer->setGeometry(body);
 	if (_mediaPreview) _mediaPreview->setGeometry(body);
 	if (_testingThemeWarning) _testingThemeWarning->setGeometry(body);

@@ -14,6 +14,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 class MainWidget;
 
+namespace TeleQQ {
+class Panel;
+} // namespace TeleQQ
+
 namespace Intro {
 class Widget;
 enum class EnterPoint : uchar;
@@ -55,6 +59,7 @@ public:
 	void setupSetupEmailLock();
 	void clearSetupEmailLock();
 	void setupIntro(Intro::EnterPoint point, QPixmap oldContentCache);
+	void setupTeleqq(QPixmap oldContentCache);
 	void setupMain(MsgId singlePeerShowAtMsgId, QPixmap oldContentCache);
 
 	void showSettings();
@@ -133,6 +138,7 @@ private:
 	object_ptr<Window::PasscodeLockWidget> _passcodeLock = { nullptr };
 	object_ptr<Window::SetupEmailLockWidget> _setupEmailLock = { nullptr };
 	object_ptr<Intro::Widget> _intro = { nullptr };
+	object_ptr<TeleQQ::Panel> _teleqq = { nullptr };
 	object_ptr<MainWidget> _main = { nullptr };
 	base::unique_qptr<Ui::LayerStackWidget> _layer;
 	rpl::variable<bool> _boxShown = false;

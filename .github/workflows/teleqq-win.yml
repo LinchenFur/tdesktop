@@ -1,0 +1,146 @@
+name: TeleQQ Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - teleqq-napcat
+
+jobs:
+  windows-x64-debug:
+    name: Windows x64 Debug
+    runs-on: windows-latest
+
+    env:
+      PREPARE_PATH: Telegram/build/prepare/prepare.py
+      UPLOAD_ARTIFACT: "true"
+
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Prepare directories
+        run: |
+          mkdir %userprofile%\TBuild\Libraries
+          mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
+          echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
+          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
+
+      - name: Get repository name
+        shell: bash
+        run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          path: ${{ env.TBUILD }}\${{ env.REPO_NAME }}
+
+      - name: First setup
+        shell: bash
+        run: |
+          DOCPATH=$TBUILD/$REPO_NAME/docs/building-win.md
+          SDK="$(grep "SDK version" $DOCPATH | sed -r 's/.*\*\*(.*)\*\* SDK version.*/\1/')"
+          echo "SDK=$SDK" >> $GITHUB_ENV
+
+          sed -i '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/${_Zi}//' "$PROGRAMFILES"/CMake/share/cmake*/Modules/Platform/Windows-MSVC.cmake
+
+          echo "$(sha256sum $TBUILD/$REPO_NAME/$PREPARE_PATH | awk '{ print $1 }')" >> CACHE_KEY.txt
+          echo "$SDK" >> CACHE_KEY.txt
+          echo "CACHE_KEY=$(sha256sum CACHE_KEY.txt | awk '{ print $1 }')" >> $GITHUB_ENV
+
+      - uses: Eden-CI/msvc-dev-cmd@master
+        name: Native Tools Command Prompt
+        with:
+          arch: x64
+          sdk: ${{ env.SDK }}
+          toolset: 14.44
+
+      - name: NuGet sources
+        run: |
+          nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
+          nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
+
+      - name: ThirdParty cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: ${{ runner.OS }}-${{ runner.arch }}-teleqq-third-party-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.OS }}-${{ runner.arch }}-teleqq-third-party-
+
+      - name: Libraries cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\*
+            !${{ env.LibrariesPath }}\cache_keys
+            !${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\*
+            !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ${{ runner.OS }}-x64-teleqq-libs-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.OS }}-x64-teleqq-libs-
+
+      - name: Qt cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ${{ runner.OS }}-x64-teleqq-qt-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.OS }}-x64-teleqq-qt-
+
+      - name: Libraries
+        run: |
+          %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat skip-release silent
+
+      - name: Patch checked-out cmake submodule
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:TBUILD $env:REPO_NAME
+
+          $qtPath = Join-Path $root 'cmake/external/qt/CMakeLists.txt'
+          $qtText = Get-Content -Raw $qtPath
+          if ($qtText -notmatch 'Qt\$\{QT_VERSION_MAJOR\}VulkanSupport') {
+            $qtText = $qtText -replace '(            lib/\$\{qt_lib_prefix\}Qt\$\{QT_VERSION_MAJOR\}ThemeSupport\r?\n)', "`$1            lib/`${qt_lib_prefix}Qt`${QT_VERSION_MAJOR}VulkanSupport`r`n"
+            Set-Content -NoNewline -Path $qtPath -Value $qtText
+          }
+
+          $cmarkPath = Join-Path $root 'cmake/external/cmark_gfm/CMakeLists.txt'
+          $cmarkText = Get-Content -Raw $cmarkPath
+          if ($cmarkText -notmatch 'target_compile_options\(libcmark-gfm_static PRIVATE /utf-8\)') {
+            $pattern = 'set_target_properties\(libcmark-gfm_static libcmark-gfm-extensions_static\r?\n    PROPERTIES FOLDER "\(.+?\)"\)\r?\n'
+            $insert = "set_target_properties(libcmark-gfm_static libcmark-gfm-extensions_static`r`n    PROPERTIES FOLDER `"(external)`")`r`n`r`nif (MSVC)`r`n    target_compile_options(libcmark-gfm_static PRIVATE /utf-8)`r`n    target_compile_options(libcmark-gfm-extensions_static PRIVATE /utf-8)`r`nendif()`r`n"
+            $cmarkText = [regex]::Replace($cmarkText, $pattern, $insert, 1)
+            Set-Content -NoNewline -Path $cmarkPath -Value $cmarkText
+          }
+
+      - name: Build Telegram Desktop
+        run: |
+          cd %TBUILD%\%REPO_NAME%\Telegram
+
+          call configure.bat ^
+          x64 ^
+          -D TDESKTOP_API_ID=17349 ^
+          -D TDESKTOP_API_HASH=344583e45741c457fe1862106095a5eb ^
+          -D CMAKE_CONFIGURATION_TYPES=Debug ^
+          -D CMAKE_COMPILE_WARNING_AS_ERROR=OFF ^
+          -D CMAKE_MSVC_DEBUG_INFORMATION_FORMAT= ^
+          -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON ^
+          -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON
+
+          cmake --build ..\out --config Debug --target Telegram --parallel 2
+
+      - name: Move artifact
+        if: env.UPLOAD_ARTIFACT == 'true'
+        run: |
+          set OUT=%TBUILD%\%REPO_NAME%\out\Debug
+          mkdir artifact
+          move %OUT%\Telegram.exe artifact\
+
+      - name: Upload artifact
+        if: env.UPLOAD_ARTIFACT == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: TeleQQ Windows x64 Debug
+          path: artifact\

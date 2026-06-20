@@ -99,6 +99,18 @@ nice_target_sources(Telegram ${src_loc}
 PRIVATE
     ${style_files}
 
+    teleqq/teleqq_napcat_client.cpp
+    teleqq/teleqq_napcat_client.h
+    teleqq/teleqq_onebot.cpp
+    teleqq/teleqq_onebot.h
+    teleqq/teleqq_panel.cpp
+    teleqq/teleqq_panel.h
+    teleqq/teleqq_store.cpp
+    teleqq/teleqq_store.h
+    teleqq/teleqq_types.h
+    teleqq/teleqq_websocket.cpp
+    teleqq/teleqq_websocket.h
+
     api/api_attached_stickers.cpp
     api/api_attached_stickers.h
     api/api_authorizations.cpp
