@@ -90,6 +90,14 @@ jobs:
           key: ${{ runner.OS }}-x64-teleqq-qt-${{ env.CACHE_KEY }}
           restore-keys: ${{ runner.OS }}-x64-teleqq-qt-
 
+      - name: Patch prepare script for CI
+        shell: pwsh
+        run: |
+          $prepare = Join-Path $env:TBUILD "$env:REPO_NAME/Telegram/build/prepare/prepare.py"
+          $text = Get-Content -Raw $prepare
+          $text = $text.Replace('jom -j%NUMBER_OF_PROCESSORS% build_libs', 'jom -j2 build_libs')
+          Set-Content -NoNewline -Path $prepare -Value $text
+
       - name: Libraries
         run: |
           %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat skip-release silent
