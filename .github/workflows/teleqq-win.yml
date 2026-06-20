@@ -99,13 +99,6 @@ jobs:
         run: |
           $root = Join-Path $env:TBUILD $env:REPO_NAME
 
-          $qtPath = Join-Path $root 'cmake/external/qt/CMakeLists.txt'
-          $qtText = Get-Content -Raw $qtPath
-          if ($qtText -notmatch 'Qt\$\{QT_VERSION_MAJOR\}VulkanSupport') {
-            $qtText = $qtText -replace '(            lib/\$\{qt_lib_prefix\}Qt\$\{QT_VERSION_MAJOR\}ThemeSupport\r?\n)', "`$1            lib/`${qt_lib_prefix}Qt`${QT_VERSION_MAJOR}VulkanSupport`r`n"
-            Set-Content -NoNewline -Path $qtPath -Value $qtText
-          }
-
           $cmarkPath = Join-Path $root 'cmake/external/cmark_gfm/CMakeLists.txt'
           $cmarkText = Get-Content -Raw $cmarkPath
           if ($cmarkText -notmatch 'target_compile_options\(libcmark-gfm_static PRIVATE /utf-8\)') {
