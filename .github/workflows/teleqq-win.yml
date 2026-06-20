@@ -90,20 +90,89 @@ jobs:
           key: ${{ runner.OS }}-x64-teleqq-qt-${{ env.CACHE_KEY }}
           restore-keys: ${{ runner.OS }}-x64-teleqq-qt-
 
+      - name: OpenSSL binary package
+        shell: pwsh
+        run: |
+          choco install openssl.light --no-progress -y
+
+          $roots = @()
+          if ($env:ProgramFiles) {
+            $roots += Join-Path $env:ProgramFiles 'OpenSSL-Win64'
+            $roots += Join-Path $env:ProgramFiles 'OpenSSL'
+          }
+          if (${env:ProgramFiles(x86)}) {
+            $roots += Join-Path ${env:ProgramFiles(x86)} 'OpenSSL-Win64'
+            $roots += Join-Path ${env:ProgramFiles(x86)} 'OpenSSL'
+          }
+          $opensslRoot = $roots | Where-Object { Test-Path (Join-Path $_ 'include/openssl/ssl.h') } | Select-Object -First 1
+          if (-not $opensslRoot) {
+            Write-Host "Known roots:"
+            $roots | ForEach-Object { Write-Host "  $_ exists=$(Test-Path $_)" }
+            throw 'OpenSSL install root was not found.'
+          }
+
+          function Select-OpenSslLib([string] $name) {
+            $matches = Get-ChildItem $opensslRoot -Recurse -File -Filter $name
+            $preferred = $matches | Where-Object { $_.Name -eq $name } | Select-Object -First 1
+            if ($preferred) { return $preferred }
+            $preferred = $matches | Where-Object { $_.Name -notmatch 'static' } | Select-Object -First 1
+            if ($preferred) { return $preferred }
+            return $matches | Select-Object -First 1
+          }
+
+          $ssl = Select-OpenSslLib 'libssl*.lib'
+          $crypto = Select-OpenSslLib 'libcrypto*.lib'
+          if (-not $ssl -or -not $crypto) {
+            Get-ChildItem $opensslRoot -Recurse -File -Include '*.lib' | Select-Object FullName
+            throw 'OpenSSL import libraries were not found.'
+          }
+
+          $dest = Join-Path $env:LibrariesPath 'openssl3'
+          if (Test-Path $dest) {
+            Remove-Item -Recurse -Force $dest
+          }
+          New-Item -ItemType Directory -Force (Join-Path $dest 'include') | Out-Null
+          New-Item -ItemType Directory -Force (Join-Path $dest 'out') | Out-Null
+          New-Item -ItemType Directory -Force (Join-Path $dest 'out.dbg') | Out-Null
+          New-Item -ItemType Directory -Force (Join-Path $dest 'bin') | Out-Null
+
+          Copy-Item -Recurse -Force (Join-Path $opensslRoot 'include/*') (Join-Path $dest 'include')
+          foreach ($libDir in @('out', 'out.dbg')) {
+            Copy-Item -Force $ssl.FullName (Join-Path $dest "$libDir/libssl.lib")
+            Copy-Item -Force $crypto.FullName (Join-Path $dest "$libDir/libcrypto.lib")
+          }
+          Get-ChildItem $opensslRoot -Recurse -File -Include 'libssl*.dll', 'libcrypto*.dll' |
+            Copy-Item -Force -Destination (Join-Path $dest 'bin')
+
+          Write-Host "OpenSSL root: $opensslRoot"
+          Write-Host "OpenSSL ssl lib: $($ssl.FullName)"
+          Write-Host "OpenSSL crypto lib: $($crypto.FullName)"
+          Get-ChildItem $dest -Recurse -File -Include 'libssl*', 'libcrypto*' | Select-Object FullName
+
       - name: Patch prepare script for CI
         shell: pwsh
         run: |
           $prepare = Join-Path $env:TBUILD "$env:REPO_NAME/Telegram/build/prepare/prepare.py"
-          $text = Get-Content -Raw $prepare
-          $text = $text.Replace('perl Configure no-shared no-tests debug-VC-WIN64A /FS', 'perl Configure no-shared no-tests VC-WIN64A /FS')
-          $text = $text.Replace('move ossl_static.pdb out.dbg', 'if exist ossl_static.pdb (move ossl_static.pdb out.dbg) else (type nul > out.dbg\ossl_static.pdb)')
-          $opensslBuild = @'
-          python -c "p='Makefile'; s=open(p, encoding='utf-8').read(); s=s.replace('/Zi /Fdossl_static.pdb ', '').replace('/Zi /Fdossl_static.pdb', ''); open(p, 'w', encoding='utf-8').write(s)"
-          jom -j1 build_libs
+          $script = @'
+          from pathlib import Path
+          import os
+          import re
+
+          prepare = Path(os.environ["PREPARE_PATH_ABS"])
+          text = prepare.read_text(encoding="utf-8")
+          text, count = re.subn(
+              r"stage\('openssl3',\s+\"\"\".*?\"\"\"\)",
+              "stage('openssl3', \"\"\"\n# OpenSSL is supplied by the GitHub Actions workflow.\n\"\"\")",
+              text,
+              count=1,
+              flags=re.S,
+          )
+          if count != 1:
+              raise SystemExit("openssl3 stage was not patched")
+          prepare.write_text(text, encoding="utf-8")
           '@
-          $opensslBuild = $opensslBuild.Trim()
-          $text = $text.Replace('jom -j%NUMBER_OF_PROCESSORS% build_libs', $opensslBuild)
-          Set-Content -NoNewline -Path $prepare -Value $text
+          $env:PREPARE_PATH_ABS = $prepare
+          $script | python -
 
       - name: Libraries
         run: |
@@ -143,8 +212,10 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
           set OUT=%TBUILD%\%REPO_NAME%\out\Debug
+          set OPENSSL_BIN=%LibrariesPath%\openssl3\bin
           mkdir artifact
           move %OUT%\Telegram.exe artifact\
+          if exist "%OPENSSL_BIN%\*.dll" copy "%OPENSSL_BIN%\*.dll" artifact\
 
       - name: Upload artifact
         if: env.UPLOAD_ARTIFACT == 'true'
