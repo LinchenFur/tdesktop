@@ -183,6 +183,14 @@ jobs:
         run: |
           $root = Join-Path $env:TBUILD $env:REPO_NAME
 
+          $optionsPath = Join-Path $root 'cmake/options_win.cmake'
+          $optionsText = Get-Content -Raw $optionsPath
+          if ($optionsText -notmatch '/DEPENDENTLOADFLAG:0x800') {
+            throw 'Expected /DEPENDENTLOADFLAG:0x800 was not found.'
+          }
+          $optionsText = $optionsText -replace '/DEPENDENTLOADFLAG:0x800', '/DEPENDENTLOADFLAG:0xB00'
+          Set-Content -NoNewline -Path $optionsPath -Value $optionsText
+
           $cmarkPath = Join-Path $root 'cmake/external/cmark_gfm/CMakeLists.txt'
           $cmarkText = Get-Content -Raw $cmarkPath
           if ($cmarkText -notmatch 'target_compile_options\(libcmark-gfm_static PRIVATE /utf-8\)') {
