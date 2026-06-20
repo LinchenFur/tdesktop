@@ -135,8 +135,6 @@ void StartWidget::resizeEvent(QResizeEvent *e) {
 
 void StartWidget::updateControlsGeometry() {
 	const auto firstTop = contentTop() + st::introStepFieldTop;
-	_endpoint->resize(st::introCountry.width, _endpoint->height());
-	_token->resize(st::introCountry.width, _token->height());
 	_endpoint->moveToLeft(contentLeft(), firstTop);
 	_token->moveToLeft(
 		contentLeft(),
