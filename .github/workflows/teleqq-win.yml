@@ -97,7 +97,12 @@ jobs:
           $text = Get-Content -Raw $prepare
           $text = $text.Replace('perl Configure no-shared no-tests debug-VC-WIN64A /FS', 'perl Configure no-shared no-tests VC-WIN64A /FS')
           $text = $text.Replace('move ossl_static.pdb out.dbg', 'if exist ossl_static.pdb (move ossl_static.pdb out.dbg) else (type nul > out.dbg\ossl_static.pdb)')
-          $text = $text.Replace('jom -j%NUMBER_OF_PROCESSORS% build_libs', 'jom -j1 build_libs')
+          $opensslBuild = @'
+          python -c "p='Makefile'; s=open(p, encoding='utf-8').read(); s=s.replace('/Zi /Fdossl_static.pdb ', '').replace('/Zi /Fdossl_static.pdb', ''); open(p, 'w', encoding='utf-8').write(s)"
+          jom -j1 build_libs
+          '@
+          $opensslBuild = $opensslBuild.Trim()
+          $text = $text.Replace('jom -j%NUMBER_OF_PROCESSORS% build_libs', $opensslBuild)
           Set-Content -NoNewline -Path $prepare -Value $text
 
       - name: Libraries
