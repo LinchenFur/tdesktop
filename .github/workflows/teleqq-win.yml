@@ -95,6 +95,8 @@ jobs:
         run: |
           $prepare = Join-Path $env:TBUILD "$env:REPO_NAME/Telegram/build/prepare/prepare.py"
           $text = Get-Content -Raw $prepare
+          $text = $text.Replace('perl Configure no-shared no-tests debug-VC-WIN64A /FS', 'perl Configure no-shared no-tests VC-WIN64A /FS')
+          $text = $text.Replace('move ossl_static.pdb out.dbg', 'if exist ossl_static.pdb (move ossl_static.pdb out.dbg) else (type nul > out.dbg\ossl_static.pdb)')
           $text = $text.Replace('jom -j%NUMBER_OF_PROCESSORS% build_libs', 'jom -j1 build_libs')
           Set-Content -NoNewline -Path $prepare -Value $text
 
