@@ -383,6 +383,9 @@ void Application::run() {
 	});
 
 	DEBUG_LOG(("Application Info: starting app..."));
+	if (!_domain->started()) {
+		startDomain();
+	}
 
 	// Create mime database, so it won't be slow later.
 	QMimeDatabase().mimeTypeForName(u"text/plain"_q);
@@ -409,14 +412,14 @@ void Application::run() {
 	startSettingsAndBackground();
 	DEBUG_LOG(("Application Info: window created..."));
 
-	_lastActivePrimaryWindow->widget()->setupTeleqq({});
+	_lastActivePrimaryWindow->showAccount(&activeAccount());
 	_lastActivePrimaryWindow->firstShow();
 	DEBUG_LOG(("Application Info: showing."));
 	_lastActivePrimaryWindow->finishFirstShow();
 	_lastActivePrimaryWindow->updateIsActiveFocus();
 	SetCrashAnnotationsGL();
 	processCreatedWindow(_lastActivePrimaryWindow);
-	DEBUG_LOG(("Application Info: TeleQQ window mode started."));
+	DEBUG_LOG(("Application Info: TeleQQ intro mode started."));
 }
 
 void Application::autoRegisterUrlScheme() {

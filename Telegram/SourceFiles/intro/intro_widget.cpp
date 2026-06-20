@@ -105,7 +105,6 @@ Widget::Widget(
 
 	switch (point) {
 	case EnterPoint::Start:
-		getNearestDC();
 		appendStep(new StartWidget(this, _account, getData()));
 		break;
 	case EnterPoint::Phone:
