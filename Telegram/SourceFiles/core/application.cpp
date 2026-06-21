@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_channel.h"
 #include "data/data_forum.h"
 #include "data/data_message_reactions.h"
+#include "data/data_peer_id.h"
 #include "data/data_session.h"
 #include "data/data_download_manager.h"
 #include "base/battery_saving.h"
@@ -147,6 +148,118 @@ base::options::toggle OptionSkipUrlSchemeRegister({
 Application *Application::Instance = nullptr;
 
 const char kOptionSkipUrlSchemeRegister[] = "skip-url-scheme-register";
+
+[[nodiscard]] BareId TeleqqBareId(const QString &id) {
+	auto ok = false;
+	auto result = id.toULongLong(&ok);
+	if (!ok || !result) {
+		result = qHash(id);
+	}
+	result &= PeerId::kChatTypeMask;
+	return result ? result : 1;
+}
+
+[[nodiscard]] MTPPeerNotifySettings TeleqqNotifySettings() {
+	return MTP_peerNotifySettings(
+		MTP_flags(0),
+		MTPBool(),
+		MTPBool(),
+		MTPint(),
+		MTPNotificationSound(),
+		MTPNotificationSound(),
+		MTPNotificationSound(),
+		MTPBool(),
+		MTPBool(),
+		MTPNotificationSound(),
+		MTPNotificationSound(),
+		MTPNotificationSound());
+}
+
+void ProjectTeleqqChatToNativeList(const TeleQQ::Chat &chat) {
+	if (!Core::App().teleqqModeActive()) {
+		return;
+	}
+	const auto session = Core::App().maybePrimarySession();
+	if (!session) {
+		return;
+	}
+
+	const auto bareId = TeleqqBareId(chat.peerId.isEmpty() ? chat.id : chat.peerId);
+	const auto title = chat.title.isEmpty() ? chat.id : chat.title;
+	const auto topMessage = MTP_int(0);
+	if (chat.kind == TeleQQ::ChatKind::Group) {
+		const auto id = ChatId(bareId);
+		session->data().processChat(MTP_chat(
+			MTP_flags(0),
+			MTP_long(id.bare),
+			MTP_string(title),
+			MTP_chatPhotoEmpty(),
+			MTP_int(0),
+			MTP_int(int(base::unixtime::now())),
+			MTP_int(1),
+			MTPInputChannel(),
+			MTPChatAdminRights(),
+			MTPChatBannedRights()));
+		session->data().applyDialogs(nullptr, QVector<MTPMessage>(), QVector<MTPDialog>{ MTP_dialog(
+			MTP_flags(0),
+			MTP_peerChat(MTP_long(id.bare)),
+			topMessage,
+			MTP_int(0),
+			MTP_int(0),
+			MTP_int(chat.unread),
+			MTP_int(0),
+			MTP_int(0),
+			MTP_int(0),
+			TeleqqNotifySettings(),
+			MTPint(),
+			MTPDraftMessage(),
+			MTPint(),
+			MTPint()) });
+	} else {
+		const auto id = UserId(bareId);
+		session->data().processUser(MTP_user(
+			MTP_flags(
+				MTPDuser::Flag::f_first_name
+				| MTPDuser::Flag::f_contact),
+			MTP_long(id.bare),
+			MTPlong(),
+			MTP_string(title),
+			MTPstring(),
+			MTPstring(),
+			MTPstring(),
+			MTPUserProfilePhoto(),
+			MTPUserStatus(),
+			MTPint(),
+			MTPVector<MTPRestrictionReason>(),
+			MTPstring(),
+			MTPstring(),
+			MTPEmojiStatus(),
+			MTPVector<MTPUsername>(),
+			MTPRecentStory(),
+			MTPPeerColor(),
+			MTPPeerColor(),
+			MTPint(),
+			MTPlong(),
+			MTPlong()));
+		session->data().applyDialogs(nullptr, QVector<MTPMessage>(), QVector<MTPDialog>{ MTP_dialog(
+			MTP_flags(0),
+			MTP_peerUser(MTP_long(id.bare)),
+			topMessage,
+			MTP_int(0),
+			MTP_int(0),
+			MTP_int(chat.unread),
+			MTP_int(0),
+			MTP_int(0),
+			MTP_int(0),
+			TeleqqNotifySettings(),
+			MTPint(),
+			MTPDraftMessage(),
+			MTPint(),
+			MTPint()) });
+	}
+	session->data().chatsListChanged(nullptr);
+	session->data().chatsListDone(nullptr);
+}
 
 struct Application::Private {
 	base::Timer quitTimer;
@@ -339,6 +452,7 @@ void Application::run() {
 			chat.id,
 			chat.title,
 			QString::number(chat.unread)));
+		ProjectTeleqqChatToNativeList(chat);
 	});
 	_private->teleqqStore->setMessageAddedCallback([](
 			TeleQQ::Message message) {
