@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QJsonObject>
 #include <QtCore/QJsonValue>
 #include <QtCore/QString>
+#include <QtCore/QStringList>
 
 #include <vector>
 
@@ -36,8 +37,10 @@ struct Chat {
 struct Message {
 	QString id;
 	QString chatId;
+	QString authorId;
 	QString author;
 	QString text;
+	QStringList imageUrls;
 	QJsonArray segments;
 	qint64 time = 0;
 	bool outgoing = false;

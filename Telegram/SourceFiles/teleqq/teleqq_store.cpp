@@ -14,6 +14,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace TeleQQ {
 namespace {
 
+[[nodiscard]] bool PlaceholderTitle(const Chat &chat, const QString &title) {
+	const auto prefix = (chat.kind == ChatKind::Group) ? u"群 "_q : u"QQ "_q;
+	return title == (prefix + chat.peerId);
+}
+
 [[nodiscard]] Chat MergeChat(Chat current, const Chat &next) {
 	if (!next.id.isEmpty()) {
 		current.id = next.id;
@@ -21,7 +26,10 @@ namespace {
 	if (!next.peerId.isEmpty()) {
 		current.peerId = next.peerId;
 	}
-	if (!next.title.isEmpty()) {
+	if (!next.title.isEmpty()
+		&& (current.title.isEmpty()
+			|| !PlaceholderTitle(next, next.title)
+			|| PlaceholderTitle(current, current.title))) {
 		current.title = next.title;
 	}
 	if (!next.subtitle.isEmpty()) {

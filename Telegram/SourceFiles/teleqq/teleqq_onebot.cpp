@@ -33,6 +33,13 @@ namespace {
 	} else if (type == u"at"_q) {
 		return u"@"_q + StringField(data, u"qq"_q);
 	} else if (type == u"image"_q) {
+		const auto url = data.value(u"url"_q).toString();
+		const auto file = data.value(u"file"_q).toString();
+		if (!url.isEmpty()) {
+			return u"[图片] "_q + url;
+		} else if (!file.isEmpty()) {
+			return u"[图片] "_q + file;
+		}
 		return u"[图片]"_q;
 	} else if (type == u"record"_q) {
 		return u"[语音]"_q;
@@ -69,6 +76,28 @@ namespace {
 	return u"https://p.qlogo.cn/gh/%1/%1/100"_q.arg(groupId);
 }
 
+[[nodiscard]] QStringList ImageUrls(const QJsonArray &segments) {
+	auto result = QStringList();
+	for (const auto &value : segments) {
+		if (!value.isObject()) {
+			continue;
+		}
+		const auto segment = value.toObject();
+		if (segment.value(u"type"_q).toString() != u"image"_q) {
+			continue;
+		}
+		const auto data = segment.value(u"data"_q).toObject();
+		const auto url = data.value(u"url"_q).toString();
+		const auto file = data.value(u"file"_q).toString();
+		if (!url.isEmpty()) {
+			result.push_back(url);
+		} else if (!file.isEmpty()) {
+			result.push_back(file);
+		}
+	}
+	return result;
+}
+
 [[nodiscard]] Message MessageFromObject(
 		const Chat &chat,
 		const QJsonObject &object,
@@ -78,14 +107,21 @@ namespace {
 	const auto raw = object.value(u"raw_message"_q).toString();
 	const auto text = RenderMessage(object.value(u"message"_q));
 	const auto message = object.value(u"message"_q);
+	const auto segments = message.isArray() ? message.toArray() : TextSegments(raw);
+	const auto sentBySelf = (object.value(u"post_type"_q).toString()
+			== u"message_sent"_q)
+		|| (object.value(u"message_sent_type"_q).toString() == u"self"_q)
+		|| (!selfId.isEmpty() && userId == selfId);
 	return {
 		.id = StringField(object, u"message_id"_q),
 		.chatId = chat.id,
+		.authorId = userId,
 		.author = BestSenderName(sender),
 		.text = !text.isEmpty() ? text : raw,
-		.segments = message.isArray() ? message.toArray() : TextSegments(raw),
+		.imageUrls = ImageUrls(segments),
+		.segments = segments,
 		.time = qint64(object.value(u"time"_q).toDouble()),
-		.outgoing = !selfId.isEmpty() && userId == selfId,
+		.outgoing = sentBySelf,
 	};
 }
 
@@ -164,15 +200,19 @@ Chat ChatFromMessageEvent(const QJsonObject &object) {
 		== u"group"_q);
 	const auto peerId = isGroup
 		? StringField(object, u"group_id"_q)
+		: (object.value(u"post_type"_q).toString() == u"message_sent"_q
+			&& !StringField(object, u"target_id"_q).isEmpty())
+		? StringField(object, u"target_id"_q)
 		: StringField(object, u"user_id"_q);
 	const auto sender = object.value(u"sender"_q).toObject();
 	const auto senderName = BestSenderName(sender);
+	const auto groupName = object.value(u"group_name"_q).toString();
 	return {
 		.kind = isGroup ? ChatKind::Group : ChatKind::Private,
 		.id = isGroup ? GroupChatId(peerId) : PrivateChatId(peerId),
 		.peerId = peerId,
 		.title = isGroup
-			? (u"群 "_q + peerId)
+			? groupName
 			: (!senderName.isEmpty() ? senderName : (u"QQ "_q + peerId)),
 		.subtitle = isGroup ? senderName : peerId,
 		.avatarUrl = isGroup ? GroupAvatarUrl(peerId) : PrivateAvatarUrl(peerId),

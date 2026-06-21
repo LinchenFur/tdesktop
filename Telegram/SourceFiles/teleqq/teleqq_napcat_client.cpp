@@ -178,7 +178,9 @@ void NapcatClient::requestHistory(
 			? u"get_group_msg_history"_q
 			: u"get_friend_msg_history"_q,
 		params,
-		[chat = std::move(chat), callback = std::move(callback)](
+		[chat = std::move(chat),
+		 selfId = _selfId,
+		 callback = std::move(callback)](
 				ApiResponse response) mutable {
 			auto result = HistoryResult{
 				.chat = chat,
@@ -194,7 +196,7 @@ void NapcatClient::requestHistory(
 							chat.kind,
 							chat.peerId,
 							entry.toObject(),
-							QString());
+							selfId);
 						message.historical = true;
 						result.messages.push_back(std::move(message));
 					}
@@ -272,7 +274,8 @@ void NapcatClient::handleTextFrame(const QByteArray &bytes) {
 		_eventCallback(object);
 	}
 
-	if (object.value(u"post_type"_q).toString() == u"message"_q
+	const auto postType = object.value(u"post_type"_q).toString();
+	if ((postType == u"message"_q || postType == u"message_sent"_q)
 		&& _messageCallback) {
 		_messageCallback(
 			OneBot::ChatFromMessageEvent(object),

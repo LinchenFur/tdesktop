@@ -282,6 +282,36 @@ const char kOptionSkipUrlSchemeRegister[] = "skip-url-scheme-register";
 		MTPRichMessage());
 }
 
+void EnsureTeleqqUser(
+		not_null<Main::Session*> session,
+		UserId id,
+		const QString &name) {
+	session->data().processUser(MTP_user(
+		MTP_flags(
+			MTPDuser::Flag::f_first_name
+			| MTPDuser::Flag::f_contact),
+		MTP_long(id.bare),
+		MTPlong(),
+		MTP_string(name.isEmpty() ? (u"QQ "_q + QString::number(id.bare)) : name),
+		MTPstring(),
+		MTPstring(),
+		MTPstring(),
+		MTPUserProfilePhoto(),
+		MTPUserStatus(),
+		MTPint(),
+		MTPVector<MTPRestrictionReason>(),
+		MTPstring(),
+		MTPstring(),
+		MTPEmojiStatus(),
+		MTPVector<MTPUsername>(),
+		MTPRecentStory(),
+		MTPPeerColor(),
+		MTPPeerColor(),
+		MTPint(),
+		MTPlong(),
+		MTPlong()));
+}
+
 [[nodiscard]] QString TeleqqProjectionKey(const TeleQQ::Message &message) {
 	return message.chatId
 		+ u":"_q
@@ -317,6 +347,12 @@ void ProjectTeleqqMessageToNativeHistory(const TeleQQ::Message &message) {
 	const auto from = [&] {
 		if (message.outgoing) {
 			return MTPPeer(peerToMTP(session->userPeerId()));
+		}
+		if (chat->kind == TeleQQ::ChatKind::Group
+			&& !message.authorId.isEmpty()) {
+			const auto userId = UserId(TeleqqBareId(message.authorId));
+			EnsureTeleqqUser(session, userId, message.author);
+			return MTPPeer(MTP_peerUser(MTP_long(userId.bare)));
 		}
 		return peer;
 	}();
