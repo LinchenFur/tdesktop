@@ -176,6 +176,10 @@ void Controller::showAccount(
 
 	_id.account->sessionValue(
 	) | rpl::on_next([=](Main::Session *session) {
+		if (!session && Core::App().teleqqModeActive()) {
+			LOG(("TeleQQ: ignored Telegram session reset in NapCat mode."));
+			return;
+		}
 		const auto was = base::take(_sessionController);
 		_sessionController = session
 			? std::make_unique<SessionController>(session, this)

@@ -455,6 +455,10 @@ void Account::startMtp(std::unique_ptr<MTP::Config> config) {
 		checkForUpdates(message) || checkForNewSession(message);
 	});
 	_mtp->setGlobalFailHandler([=](const MTP::Error &, const MTP::Response &) {
+		if (Core::App().teleqqModeActive()) {
+			LOG(("TeleQQ: ignored Telegram auth failure in NapCat mode."));
+			return;
+		}
 		if (const auto session = maybeSession()) {
 			crl::on_main(session, [=] { logOut(); });
 		}

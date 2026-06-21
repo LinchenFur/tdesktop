@@ -163,6 +163,7 @@ void StartWidget::handleStatus(const QString &status) {
 	if (status == u"connected"_q) {
 		_connecting = false;
 		hideError();
+		Core::App().setTeleqqModeActive(true);
 		if (const auto window = Core::App().activePrimaryWindow()) {
 			window->widget()->setupTeleqq({});
 		}

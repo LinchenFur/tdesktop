@@ -169,6 +169,8 @@ public:
 	}
 	[[nodiscard]] TeleQQ::Store *teleqqStore() const;
 	[[nodiscard]] TeleQQ::NapcatClient *teleqqClient() const;
+	void setTeleqqModeActive(bool active);
+	[[nodiscard]] bool teleqqModeActive() const;
 
 	// Windows interface.
 	bool hasActiveWindow(not_null<Main::Session*> session) const;

@@ -155,6 +155,7 @@ struct Application::Private {
 	std::unique_ptr<ProxyRotationManager> proxyRotation;
 	std::unique_ptr<TeleQQ::Store> teleqqStore;
 	std::unique_ptr<TeleQQ::NapcatClient> teleqq;
+	bool teleqqModeActive = false;
 };
 
 Application::Application()
@@ -1375,6 +1376,14 @@ TeleQQ::Store *Application::teleqqStore() const {
 
 TeleQQ::NapcatClient *Application::teleqqClient() const {
 	return _private->teleqq.get();
+}
+
+void Application::setTeleqqModeActive(bool active) {
+	_private->teleqqModeActive = active;
+}
+
+bool Application::teleqqModeActive() const {
+	return _private->teleqqModeActive;
 }
 
 bool Application::savingPositionFor(
