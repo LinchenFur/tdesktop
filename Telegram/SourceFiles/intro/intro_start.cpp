@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "core/application.h"
 #include "teleqq/teleqq_napcat_client.h"
+#include "ui/widgets/buttons.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/fields/password_input.h"
 #include "window/window_controller.h"
@@ -48,7 +49,11 @@ StartWidget::StartWidget(
 , _token(
 	this,
 	st::introPassword,
-	rpl::single(u"NapCat access_token（可留空）"_q)) {
+	rpl::single(u"NapCat access_token（可留空）"_q))
+, _connect(
+	this,
+	rpl::single(u"连接 NapCat"_q),
+	st::introNextButton) {
 	setMouseTracking(true);
 	setTitleText(rpl::single(u"TeleQQ"_q));
 	setDescriptionText(u"使用 Telegram Desktop 界面连接 NapCat 后端。"_q);
@@ -60,6 +65,9 @@ StartWidget::StartWidget(
 	}, _endpoint->lifetime());
 	connect(_token, &Ui::PasswordInput::changed, [=] {
 		hideError();
+	});
+	_connect->setClickedCallback([=] {
+		submit();
 	});
 
 	setTabOrder(_endpoint, _token);
@@ -110,7 +118,7 @@ void StartWidget::submit() {
 }
 
 rpl::producer<QString> StartWidget::nextButtonText() const {
-	return rpl::single(u"连接 NapCat"_q);
+	return rpl::single(QString());
 }
 
 rpl::producer<> StartWidget::nextButtonFocusRequests() const {
@@ -121,6 +129,7 @@ void StartWidget::activate() {
 	Step::activate();
 	_endpoint->show();
 	_token->show();
+	_connect->show();
 	setInnerFocus();
 }
 
@@ -134,11 +143,17 @@ void StartWidget::resizeEvent(QResizeEvent *e) {
 }
 
 void StartWidget::updateControlsGeometry() {
-	const auto firstTop = contentTop() + st::introStepFieldTop;
+	const auto firstTop = contentTop() + st::introCoverDescriptionTop + 42;
 	_endpoint->moveToLeft(contentLeft(), firstTop);
 	_token->moveToLeft(
 		contentLeft(),
-		firstTop + _endpoint->height() + st::introPhoneTop);
+		firstTop + _endpoint->height() + st::introPhoneTop + 2);
+	const auto buttonTop = _token->y() + _token->height() + 58;
+	_connect->moveToLeft((width() - _connect->width()) / 2, buttonTop);
+}
+
+int StartWidget::errorTop() const {
+	return _token->y() + _token->height() + 12;
 }
 
 void StartWidget::handleStatus(const QString &status) {

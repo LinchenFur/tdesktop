@@ -35,6 +35,7 @@ public:
 
 protected:
 	void resizeEvent(QResizeEvent *e) override;
+	int errorTop() const override;
 
 private:
 	void loadSavedOptions();
@@ -44,6 +45,7 @@ private:
 
 	object_ptr<Ui::InputField> _endpoint;
 	object_ptr<Ui::PasswordInput> _token;
+	object_ptr<Ui::RoundButton> _connect;
 	rpl::event_stream<> _nextButtonFocusRequests;
 	bool _connecting = false;
 
