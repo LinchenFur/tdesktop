@@ -103,8 +103,6 @@ PRIVATE
     teleqq/teleqq_napcat_client.h
     teleqq/teleqq_onebot.cpp
     teleqq/teleqq_onebot.h
-    teleqq/teleqq_panel.cpp
-    teleqq/teleqq_panel.h
     teleqq/teleqq_store.cpp
     teleqq/teleqq_store.h
     teleqq/teleqq_types.h

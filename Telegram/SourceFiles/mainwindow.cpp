@@ -24,10 +24,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/sandbox.h"
 #include "core/application.h"
 #include "export/export_manager.h"
-#include "teleqq/teleqq_panel.h"
 #include "inline_bots/bot_attach_web_view.h" // AttachWebView::cancel.
 #include "intro/intro_widget.h"
 #include "main/main_session.h"
+#include "main/main_session_settings.h"
 #include "main/main_account.h" // Account::sessionValue.
 #include "main/main_domain.h"
 #include "mainwidget.h"
@@ -156,8 +156,6 @@ void MainWindow::finishFirstShow() {
 		_main->activate();
 	} else if (!_passcodeLock && !_setupEmailLock && _intro) {
 		_intro->setInnerFocus();
-	} else if (!_passcodeLock && !_setupEmailLock && _teleqq) {
-		_teleqq->setFocus();
 	}
 }
 
@@ -165,7 +163,6 @@ void MainWindow::clearWidgetsHook() {
 	_mediaPreview.destroy();
 	_main.destroy();
 	_intro.destroy();
-	_teleqq.destroy();
 	if (!Core::App().passcodeLocked()) {
 		_passcodeLock.destroy();
 	}
@@ -185,7 +182,7 @@ void MainWindow::preventOrInvoke(Fn<void()> callback) {
 }
 
 void MainWindow::setupPasscodeLock() {
-	auto animated = (_main || _intro || _teleqq);
+	auto animated = (_main || _intro);
 	auto oldContentCache = animated ? grabForSlideAnimation() : QPixmap();
 	_passcodeLock.create(bodyWidget(), &controller());
 	updateControlsGeometry();
@@ -196,9 +193,6 @@ void MainWindow::setupPasscodeLock() {
 	}
 	if (_intro) {
 		_intro->hide();
-	}
-	if (_teleqq) {
-		_teleqq->hide();
 	}
 	if (animated) {
 		_passcodeLock->showAnimated(std::move(oldContentCache));
@@ -212,7 +206,7 @@ void MainWindow::setupPasscodeLock() {
 }
 
 void MainWindow::setupSetupEmailLock() {
-	auto animated = (_main || _intro || _teleqq || _passcodeLock);
+	auto animated = (_main || _intro || _passcodeLock);
 	auto oldContentCache = animated ? grabForSlideAnimation() : QPixmap();
 	_setupEmailLock.create(bodyWidget(), &controller());
 	updateControlsGeometry();
@@ -223,9 +217,6 @@ void MainWindow::setupSetupEmailLock() {
 	}
 	if (_intro) {
 		_intro->hide();
-	}
-	if (_teleqq) {
-		_teleqq->hide();
 	}
 	if (_passcodeLock) {
 		_passcodeLock->hide();
@@ -261,15 +252,11 @@ void MainWindow::clearSetupEmailLock() {
 		updateControlsGeometry();
 		_main->showAnimated(std::move(oldContentCache), true);
 		Core::App().checkStartUrls();
-	} else if (_teleqq) {
-		_teleqq->show();
-		updateControlsGeometry();
-		setInnerFocus();
 	}
 }
 
 void MainWindow::clearPasscodeLock() {
-	Expects(_intro || _main || _teleqq);
+	Expects(_intro || _main);
 
 	if (!_passcodeLock) {
 		return;
@@ -290,10 +277,6 @@ void MainWindow::clearPasscodeLock() {
 		updateControlsGeometry();
 		_main->showAnimated(std::move(oldContentCache), true);
 		Core::App().checkStartUrls();
-	} else if (_teleqq) {
-		_teleqq->show();
-		updateControlsGeometry();
-		setInnerFocus();
 	}
 }
 
@@ -333,26 +316,37 @@ void MainWindow::setupIntro(
 }
 
 void MainWindow::setupTeleqq(QPixmap) {
-	destroyLayer();
-
-	const auto store = Core::App().teleqqStore();
-	const auto client = Core::App().teleqqClient();
-	Expects(store != nullptr);
-	Expects(client != nullptr);
-
-	auto created = object_ptr<TeleQQ::Panel>::fromRaw(
-		new TeleQQ::Panel(store, client, bodyWidget()));
-
-	clearWidgets();
-	_teleqq = std::move(created);
-	if (_passcodeLock || _setupEmailLock) {
-		_teleqq->hide();
-	} else {
-		_teleqq->show();
-		updateControlsGeometry();
-		_teleqq->setFocus();
+	if (!account().sessionExists()) {
+		auto settings = std::make_unique<Main::SessionSettings>();
+		settings->setDialogsFiltersEnabled(false);
+		account().createSession(MTP_user(
+			MTP_flags(
+				MTPDuser::Flag::f_self
+				| MTPDuser::Flag::f_first_name
+				| MTPDuser::Flag::f_username),
+			MTP_long(1),
+			MTPlong(), // access_hash
+			MTP_string("TeleQQ"),
+			MTPstring(), // last_name
+			MTP_string("napcat"),
+			MTPstring(), // phone
+			MTP_userProfilePhotoEmpty(),
+			MTP_userStatusRecently(MTP_flags(0)),
+			MTPint(), // bot_info_version
+			MTPVector<MTPRestrictionReason>(),
+			MTPstring(), // bot_inline_placeholder
+			MTPstring(), // lang_code
+			MTPEmojiStatus(),
+			MTPVector<MTPUsername>(),
+			MTPRecentStory(),
+			MTPPeerColor(), // color
+			MTPPeerColor(), // profile_color
+			MTPint(), // bot_active_users
+			MTPlong(), // bot_verification_icon
+			MTPlong()), // send_paid_messages_stars
+			std::move(settings));
 	}
-	fixOrder();
+	setupMain(0, {});
 }
 
 void MainWindow::setupMain(
@@ -654,10 +648,6 @@ void MainWindow::checkActivation() {
 
 bool MainWindow::contentOverlapped(const QRect &globalRect) {
 	return (_main && _main->contentOverlapped(globalRect))
-		|| (_teleqq
-			&& !_teleqq->isHidden()
-			&& QRect(_teleqq->mapToGlobal(_teleqq->rect().topLeft()),
-				_teleqq->size()).intersects(globalRect))
 		|| (_layer && _layer->contentOverlapped(globalRect));
 }
 
@@ -674,8 +664,6 @@ void MainWindow::setInnerFocus() {
 		_main->setInnerFocus();
 	} else if (_intro) {
 		_intro->setInnerFocus();
-	} else if (_teleqq) {
-		_teleqq->setFocus();
 	}
 }
 
@@ -810,7 +798,6 @@ void MainWindow::updateControlsGeometry() {
 			body.height() });
 	}
 	if (_intro) _intro->setGeometry(body);
-	if (_teleqq) _teleqq->setGeometry(body);
 	if (_layer) _layer->setGeometry(body);
 	if (_mediaPreview) _mediaPreview->setGeometry(body);
 	if (_testingThemeWarning) _testingThemeWarning->setGeometry(body);
