@@ -897,6 +897,15 @@ void ApiWrap::requestMoreDialogs(Data::Folder *folder) {
 	} else if (_dialogsLoadBlockedByDate.current()) {
 		return;
 	}
+	if (Core::App().teleqqModeActive()) {
+		state->listReceived = true;
+		state->pinnedReceived = true;
+		state->requestId = 0;
+		state->pinnedRequestId = 0;
+		dialogsLoadFinish(folder);
+		_session->data().chatsListChanged(folder);
+		return;
+	}
 
 	const auto firstLoad = !state->offsetDate;
 	const auto loadCount = firstLoad ? kDialogsFirstLoad : kDialogsPerPage;

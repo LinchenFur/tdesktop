@@ -175,6 +175,89 @@ const char kOptionSkipUrlSchemeRegister[] = "skip-url-scheme-register";
 		MTPNotificationSound());
 }
 
+[[nodiscard]] TimeId TeleqqDate(qint64 value) {
+	if (value > 20000000000LL) {
+		value /= 1000;
+	}
+	return (value > 0) ? TimeId(value) : base::unixtime::now();
+}
+
+[[nodiscard]] QString TeleqqPreviewText(const TeleQQ::Chat &chat) {
+	if (!chat.lastMessage.isEmpty()) {
+		return chat.lastMessage;
+	} else if (!chat.subtitle.isEmpty()) {
+		return chat.subtitle;
+	}
+	return (chat.kind == TeleQQ::ChatKind::Group) ? u"QQ群"_q : u"QQ好友"_q;
+}
+
+[[nodiscard]] MTPMessage TeleqqPreviewMessage(
+		const TeleQQ::Chat &chat,
+		const MTPPeer &peer,
+		const MTPPeer &from) {
+	return MTP_message(
+		MTP_flags(MTPDmessage::Flag::f_from_id),
+		MTP_int(1),
+		from,
+		MTPint(), // from_boosts_applied
+		MTPstring(), // from_rank
+		peer,
+		MTPPeer(), // saved_peer_id
+		MTPMessageFwdHeader(),
+		MTPlong(), // via_bot_id
+		MTPlong(), // via_business_bot_id
+		MTPPeer(), // guestchat_via_from
+		MTPMessageReplyHeader(),
+		MTP_int(TeleqqDate(chat.updatedAt)),
+		MTP_string(TeleqqPreviewText(chat)),
+		MTP_messageMediaEmpty(),
+		MTPReplyMarkup(),
+		MTPVector<MTPMessageEntity>(),
+		MTPint(), // views
+		MTPint(), // forwards
+		MTPMessageReplies(),
+		MTPint(), // edit_date
+		MTPstring(),
+		MTPlong(),
+		MTPMessageReactions(),
+		MTPVector<MTPRestrictionReason>(),
+		MTPint(), // ttl_period
+		MTPint(), // quick_reply_shortcut_id
+		MTPlong(), // effect
+		MTPFactCheck(),
+		MTPint(), // report_delivery_until_date
+		MTPlong(), // paid_message_stars
+		MTPSuggestedPost(),
+		MTPint(), // schedule_repeat_period
+		MTPstring(), // summary_from_language
+		MTPRichMessage());
+}
+
+void ApplyTeleqqDialog(
+		not_null<Main::Session*> session,
+		const TeleQQ::Chat &chat,
+		const MTPPeer &peer,
+		const MTPPeer &from) {
+	session->data().applyDialogs(
+		nullptr,
+		QVector<MTPMessage>{ TeleqqPreviewMessage(chat, peer, from) },
+		QVector<MTPDialog>{ MTP_dialog(
+			MTP_flags(0),
+			peer,
+			MTP_int(1),
+			MTP_int(0),
+			MTP_int(0),
+			MTP_int(chat.unread),
+			MTP_int(0),
+			MTP_int(1),
+			MTP_int(1),
+			TeleqqNotifySettings(),
+			MTPint(),
+			MTPDraftMessage(),
+			MTPint(),
+			MTPint()) });
+}
+
 void ProjectTeleqqChatToNativeList(const TeleQQ::Chat &chat) {
 	if (!Core::App().teleqqModeActive()) {
 		return;
@@ -186,7 +269,6 @@ void ProjectTeleqqChatToNativeList(const TeleQQ::Chat &chat) {
 
 	const auto bareId = TeleqqBareId(chat.peerId.isEmpty() ? chat.id : chat.peerId);
 	const auto title = chat.title.isEmpty() ? chat.id : chat.title;
-	const auto topMessage = MTP_int(0);
 	if (chat.kind == TeleQQ::ChatKind::Group) {
 		const auto id = ChatId(bareId);
 		session->data().processChat(MTP_chat(
@@ -200,21 +282,8 @@ void ProjectTeleqqChatToNativeList(const TeleQQ::Chat &chat) {
 			MTPInputChannel(),
 			MTPChatAdminRights(),
 			MTPChatBannedRights()));
-		session->data().applyDialogs(nullptr, QVector<MTPMessage>(), QVector<MTPDialog>{ MTP_dialog(
-			MTP_flags(0),
-			MTP_peerChat(MTP_long(id.bare)),
-			topMessage,
-			MTP_int(0),
-			MTP_int(0),
-			MTP_int(chat.unread),
-			MTP_int(0),
-			MTP_int(0),
-			MTP_int(0),
-			TeleqqNotifySettings(),
-			MTPint(),
-			MTPDraftMessage(),
-			MTPint(),
-			MTPint()) });
+		const auto peer = MTP_peerChat(MTP_long(id.bare));
+		ApplyTeleqqDialog(session, chat, peer, peerToMTP(session->userPeerId()));
 	} else {
 		const auto id = UserId(bareId);
 		session->data().processUser(MTP_user(
@@ -241,21 +310,8 @@ void ProjectTeleqqChatToNativeList(const TeleQQ::Chat &chat) {
 			MTPint(),
 			MTPlong(),
 			MTPlong()));
-		session->data().applyDialogs(nullptr, QVector<MTPMessage>(), QVector<MTPDialog>{ MTP_dialog(
-			MTP_flags(0),
-			MTP_peerUser(MTP_long(id.bare)),
-			topMessage,
-			MTP_int(0),
-			MTP_int(0),
-			MTP_int(chat.unread),
-			MTP_int(0),
-			MTP_int(0),
-			MTP_int(0),
-			TeleqqNotifySettings(),
-			MTPint(),
-			MTPDraftMessage(),
-			MTPint(),
-			MTPint()) });
+		const auto peer = MTP_peerUser(MTP_long(id.bare));
+		ApplyTeleqqDialog(session, chat, peer, peer);
 	}
 	session->data().chatsListChanged(nullptr);
 	session->data().chatsListDone(nullptr);
