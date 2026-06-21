@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonObject>
+#include <QtCore/QUrl>
 
 namespace TeleQQ::OneBot {
 namespace {
@@ -25,6 +26,69 @@ namespace {
 	return QString();
 }
 
+[[nodiscard]] bool LooksLikeUrl(const QString &value) {
+	return value.startsWith(u"http://"_q, Qt::CaseInsensitive)
+		|| value.startsWith(u"https://"_q, Qt::CaseInsensitive);
+}
+
+[[nodiscard]] QString FirstUrl(const QJsonObject &data) {
+	for (const auto &key : { u"url"_q, u"file"_q }) {
+		const auto value = data.value(key).toString();
+		if (LooksLikeUrl(value)) {
+			return value;
+		}
+	}
+	return QString();
+}
+
+[[nodiscard]] QString FirstFileName(
+		const QJsonObject &data,
+		const QString &url,
+		const QString &fallback) {
+	for (const auto &key : { u"name"_q, u"file_name"_q, u"filename"_q }) {
+		const auto value = data.value(key).toString();
+		if (!value.isEmpty()) {
+			return value;
+		}
+	}
+	const auto fromUrl = QUrl(url).fileName();
+	return fromUrl.isEmpty() ? fallback : fromUrl;
+}
+
+[[nodiscard]] QString MimeFromName(
+		const QString &name,
+		AttachmentKind kind) {
+	const auto lower = name.toLower();
+	if (lower.endsWith(u".png"_q)) {
+		return u"image/png"_q;
+	} else if (lower.endsWith(u".gif"_q)) {
+		return u"image/gif"_q;
+	} else if (lower.endsWith(u".webp"_q)) {
+		return u"image/webp"_q;
+	} else if (lower.endsWith(u".jpg"_q) || lower.endsWith(u".jpeg"_q)) {
+		return u"image/jpeg"_q;
+	} else if (lower.endsWith(u".mp4"_q)) {
+		return u"video/mp4"_q;
+	} else if (lower.endsWith(u".pdf"_q)) {
+		return u"application/pdf"_q;
+	} else if (lower.endsWith(u".zip"_q)) {
+		return u"application/zip"_q;
+	}
+	return (kind == AttachmentKind::Image)
+		? u"image/jpeg"_q
+		: u"application/octet-stream"_q;
+}
+
+[[nodiscard]] qint64 SizeField(const QJsonObject &data) {
+	for (const auto &key : { u"size"_q, u"file_size"_q }) {
+		const auto value = data.value(key);
+		if (value.isDouble()) {
+			return qint64(value.toDouble());
+		}
+	}
+	return 0;
+}
+
 [[nodiscard]] QString RenderSegment(const QJsonObject &segment) {
 	const auto type = segment.value(u"type"_q).toString();
 	const auto data = segment.value(u"data"_q).toObject();
@@ -33,23 +97,17 @@ namespace {
 	} else if (type == u"at"_q) {
 		return u"@"_q + StringField(data, u"qq"_q);
 	} else if (type == u"image"_q) {
-		const auto url = data.value(u"url"_q).toString();
-		const auto file = data.value(u"file"_q).toString();
-		if (!url.isEmpty()) {
-			return u"[图片] "_q + url;
-		} else if (!file.isEmpty()) {
-			return u"[图片] "_q + file;
-		}
 		return u"[图片]"_q;
 	} else if (type == u"record"_q) {
 		return u"[语音]"_q;
 	} else if (type == u"video"_q) {
 		return u"[视频]"_q;
 	} else if (type == u"file"_q) {
-		const auto name = data.value(u"name"_q).toString();
+		const auto name = FirstFileName(data, FirstUrl(data), QString());
 		return name.isEmpty() ? u"[文件]"_q : (u"[文件 "_q + name + u"]"_q);
 	} else if (type == u"face"_q) {
-		return u"[表情]"_q;
+		const auto id = StringField(data, u"id"_q);
+		return id.isEmpty() ? u"[QQ表情]"_q : (u"[QQ表情 "_q + id + u"]"_q);
 	} else if (type == u"reply"_q) {
 		return u"[回复]"_q;
 	}
@@ -74,6 +132,40 @@ namespace {
 
 [[nodiscard]] QString GroupAvatarUrl(const QString &groupId) {
 	return u"https://p.qlogo.cn/gh/%1/%1/100"_q.arg(groupId);
+}
+
+[[nodiscard]] std::vector<Attachment> Attachments(const QJsonArray &segments) {
+	auto result = std::vector<Attachment>();
+	for (const auto &value : segments) {
+		if (!value.isObject()) {
+			continue;
+		}
+		const auto segment = value.toObject();
+		const auto type = segment.value(u"type"_q).toString();
+		if (type != u"image"_q && type != u"file"_q) {
+			continue;
+		}
+		const auto kind = (type == u"image"_q)
+			? AttachmentKind::Image
+			: AttachmentKind::File;
+		const auto data = segment.value(u"data"_q).toObject();
+		const auto url = FirstUrl(data);
+		if (url.isEmpty()) {
+			continue;
+		}
+		const auto name = FirstFileName(
+			data,
+			url,
+			(kind == AttachmentKind::Image) ? u"image.jpg"_q : u"file"_q);
+		result.push_back({
+			.kind = kind,
+			.url = url,
+			.name = name,
+			.mime = MimeFromName(name, kind),
+			.size = SizeField(data),
+		});
+	}
+	return result;
 }
 
 [[nodiscard]] QStringList ImageUrls(const QJsonArray &segments) {
@@ -119,6 +211,7 @@ namespace {
 		.author = BestSenderName(sender),
 		.text = !text.isEmpty() ? text : raw,
 		.imageUrls = ImageUrls(segments),
+		.attachments = Attachments(segments),
 		.segments = segments,
 		.time = qint64(object.value(u"time"_q).toDouble()),
 		.outgoing = sentBySelf,

@@ -34,6 +34,19 @@ struct Chat {
 	int unread = 0;
 };
 
+enum class AttachmentKind {
+	Image,
+	File,
+};
+
+struct Attachment {
+	AttachmentKind kind = AttachmentKind::File;
+	QString url;
+	QString name;
+	QString mime;
+	qint64 size = 0;
+};
+
 struct Message {
 	QString id;
 	QString chatId;
@@ -41,6 +54,7 @@ struct Message {
 	QString author;
 	QString text;
 	QStringList imageUrls;
+	std::vector<Attachment> attachments;
 	QJsonArray segments;
 	qint64 time = 0;
 	bool outgoing = false;

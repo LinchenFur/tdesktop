@@ -9,12 +9,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "data/data_abstract_structure.h"
 #include "data/data_channel.h"
+#include "data/data_changes.h"
+#include "data/data_chat.h"
+#include "data/data_document.h"
 #include "data/data_forum.h"
 #include "data/data_message_reactions.h"
 #include "data/data_peer_id.h"
+#include "data/data_peer.h"
 #include "data/data_session.h"
 #include "data/data_download_manager.h"
 #include "data/data_history_messages.h"
+#include "data/data_user.h"
 #include "base/battery_saving.h"
 #include "base/event_filter.h"
 #include "base/invoke_queued.h"
@@ -74,6 +79,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/themes/window_theme.h"
 #include "ui/widgets/tooltip.h"
 #include "ui/gl/gl_detection.h"
+#include "ui/image/image_location.h"
 #include "ui/text/text_options.h"
 #include "ui/effects/spoiler_mess.h"
 #include "ui/cached_round_corners.h"
@@ -238,7 +244,138 @@ const char kOptionSkipUrlSchemeRegister[] = "skip-url-scheme-register";
 		MTPRichMessage());
 }
 
+[[nodiscard]] bool TeleqqHttpUrl(const QString &url) {
+	return url.startsWith(u"http://"_q, Qt::CaseInsensitive)
+		|| url.startsWith(u"https://"_q, Qt::CaseInsensitive);
+}
+
+void ApplyTeleqqAvatar(
+		not_null<PeerData*> peer,
+		const QString &url) {
+	if (!TeleqqHttpUrl(url)) {
+		return;
+	}
+	const auto photoId = PhotoId(qHash(url) ? qHash(url) : 1);
+	peer->setUserpic(
+		photoId,
+		ImageLocation(
+			DownloadLocation{ PlainUrlLocation{ url } },
+			100,
+			100),
+		false);
+	peer->session().changes().peerUpdated(peer, UpdateFlag::Photo);
+}
+
+[[nodiscard]] QString TeleqqMessageText(
+		const TeleQQ::Chat &chat,
+		const TeleQQ::Message &message) {
+	auto result = message.text.trimmed();
+	if (!message.attachments.empty()) {
+		for (const auto &attachment : message.attachments) {
+			if (!attachment.url.isEmpty()) {
+				result.replace(attachment.url, QString());
+			}
+			if (attachment.kind == TeleQQ::AttachmentKind::Image) {
+				result.replace(u"[图片]"_q, QString());
+			} else {
+				result.replace(u"[文件]"_q, QString());
+				if (!attachment.name.isEmpty()) {
+					result.replace(
+						u"[文件 "_q + attachment.name + u"]"_q,
+						QString());
+				}
+			}
+		}
+		result = result.trimmed();
+	}
+	return result.isEmpty() && message.attachments.empty()
+		? TeleqqPreviewText(chat)
+		: result;
+}
+
+[[nodiscard]] const TeleQQ::Attachment *TeleqqMediaAttachment(
+		const TeleQQ::Message &message) {
+	for (const auto &attachment : message.attachments) {
+		if (TeleqqHttpUrl(attachment.url)) {
+			return &attachment;
+		}
+	}
+	return nullptr;
+}
+
+[[nodiscard]] QVector<MTPDocumentAttribute> TeleqqDocumentAttributes(
+		const TeleQQ::Attachment &attachment) {
+	auto result = QVector<MTPDocumentAttribute>();
+	if (!attachment.name.isEmpty()) {
+		result.push_back(MTP_documentAttributeFilename(
+			MTP_string(attachment.name)));
+	}
+	if (attachment.kind == TeleQQ::AttachmentKind::Image) {
+		result.push_back(MTP_documentAttributeImageSize(
+			MTP_int(800),
+			MTP_int(600)));
+	}
+	return result;
+}
+
+[[nodiscard]] QString TeleqqAttachmentMime(
+		const TeleQQ::Attachment &attachment) {
+	if (!attachment.mime.isEmpty()) {
+		return attachment.mime;
+	}
+	return (attachment.kind == TeleQQ::AttachmentKind::Image)
+		? u"image/jpeg"_q
+		: u"application/octet-stream"_q;
+}
+
+[[nodiscard]] MTPDocument TeleqqDocument(
+		not_null<Main::Session*> session,
+		const TeleQQ::Attachment &attachment) {
+	const auto attributes = TeleqqDocumentAttributes(attachment);
+	const auto mime = TeleqqAttachmentMime(attachment);
+	const auto size = attachment.size > 0 ? attachment.size : 0;
+	const auto webDocument = MTP_webDocumentNoProxy(
+		MTP_string(attachment.url),
+		MTP_int(size > 2147483647 ? 0 : int(size)),
+		MTP_string(mime),
+		MTP_vector<MTPDocumentAttribute>(attributes));
+	const auto document = session->data().documentFromWeb(
+		webDocument,
+		ImageLocation(),
+		ImageLocation());
+	return MTP_document(
+		MTP_flags(0),
+		MTP_long(document->id),
+		MTP_long(0),
+		MTP_bytes(),
+		MTP_int(base::unixtime::now()),
+		MTP_string(mime),
+		MTP_long(size),
+		MTPVector<MTPPhotoSize>(),
+		MTPVector<MTPVideoSize>(),
+		MTP_int(0),
+		MTP_vector<MTPDocumentAttribute>(attributes));
+}
+
+[[nodiscard]] MTPMessageMedia TeleqqNativeMedia(
+		not_null<Main::Session*> session,
+		const TeleQQ::Message &message) {
+	const auto attachment = TeleqqMediaAttachment(message);
+	if (!attachment) {
+		return MTP_messageMediaEmpty();
+	}
+	using Flag = MTPDmessageMediaDocument::Flag;
+	return MTP_messageMediaDocument(
+		MTP_flags(Flag::f_document),
+		TeleqqDocument(session, *attachment),
+		MTPVector<MTPDocument>(),
+		MTPPhoto(),
+		MTPint(),
+		MTPint());
+}
+
 [[nodiscard]] MTPMessage TeleqqNativeMessage(
+		not_null<Main::Session*> session,
 		const TeleQQ::Chat &chat,
 		const TeleQQ::Message &message,
 		const MTPPeer &peer,
@@ -258,8 +395,8 @@ const char kOptionSkipUrlSchemeRegister[] = "skip-url-scheme-register";
 		MTPPeer(), // guestchat_via_from
 		MTPMessageReplyHeader(),
 		MTP_int(TeleqqDate(message.time)),
-		MTP_string(message.text.isEmpty() ? TeleqqPreviewText(chat) : message.text),
-		MTP_messageMediaEmpty(),
+		MTP_string(TeleqqMessageText(chat, message)),
+		TeleqqNativeMedia(session, message),
 		MTPReplyMarkup(),
 		MTPVector<MTPMessageEntity>(),
 		MTPint(), // views
@@ -363,7 +500,7 @@ void ProjectTeleqqMessageToNativeHistory(const TeleQQ::Message &message) {
 			: MessageFlag());
 	const auto item = session->data().addNewMessage(
 		session->data().nextLocalMessageId(),
-		TeleqqNativeMessage(*chat, message, peer, from),
+		TeleqqNativeMessage(session, *chat, message, peer, from),
 		localFlags,
 		message.historical ? NewMessageType::Existing : NewMessageType::Unread);
 	if (item) {
@@ -428,6 +565,7 @@ void ProjectTeleqqChatToNativeList(const TeleQQ::Chat &chat) {
 			MTPInputChannel(),
 			MTPChatAdminRights(),
 			MTPChatBannedRights()));
+		ApplyTeleqqAvatar(session->data().chat(id), chat.avatarUrl);
 		const auto peer = MTP_peerChat(MTP_long(id.bare));
 		ApplyTeleqqDialog(session, chat, peer, peerToMTP(session->userPeerId()));
 	} else {
@@ -456,6 +594,7 @@ void ProjectTeleqqChatToNativeList(const TeleQQ::Chat &chat) {
 			MTPint(),
 			MTPlong(),
 			MTPlong()));
+		ApplyTeleqqAvatar(session->data().user(id), chat.avatarUrl);
 		const auto peer = MTP_peerUser(MTP_long(id.bare));
 		ApplyTeleqqDialog(session, chat, peer, peer);
 	}
