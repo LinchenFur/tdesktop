@@ -106,8 +106,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_window.h"
 
 #include <QtCore/QJsonDocument>
+#include <QtCore/QHash>
 #include <QtCore/QJsonObject>
-#include <QtCore/QSet>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QMimeDatabase>
 #include <QtGui/QGuiApplication>
@@ -251,6 +251,13 @@ const char kOptionSkipUrlSchemeRegister[] = "skip-url-scheme-register";
 		|| url.startsWith(u"https://"_q, Qt::CaseInsensitive);
 }
 
+[[nodiscard]] QString TeleqqPrivateAvatarUrl(const QString &userId) {
+	return userId.isEmpty()
+		? QString()
+		: u"https://q.qlogo.cn/headimg_dl?dst_uin=%1&spec=640&img_type=jpg"_q
+			.arg(userId);
+}
+
 void ApplyTeleqqAvatar(
 		not_null<PeerData*> peer,
 		const QString &url) {
@@ -262,8 +269,8 @@ void ApplyTeleqqAvatar(
 		photoId,
 		ImageLocation(
 			DownloadLocation{ PlainUrlLocation{ url } },
-			100,
-			100),
+			640,
+			640),
 		false);
 	peer->session().changes().peerUpdated(peer, UpdateFlag::Photo);
 }
@@ -274,6 +281,9 @@ void ApplyTeleqqAvatar(
 	auto result = message.text.trimmed();
 	if (!message.attachments.empty()) {
 		for (const auto &attachment : message.attachments) {
+			if (!TeleqqHttpUrl(attachment.url)) {
+				continue;
+			}
 			if (!attachment.url.isEmpty()) {
 				result.replace(attachment.url, QString());
 			}
@@ -335,7 +345,14 @@ void ApplyTeleqqAvatar(
 		const TeleQQ::Attachment &attachment) {
 	const auto attributes = TeleqqDocumentAttributes(attachment);
 	const auto mime = TeleqqAttachmentMime(attachment);
-	const auto size = attachment.size > 0 ? attachment.size : 0;
+	const auto size = attachment.size > 0 ? attachment.size : 1;
+	const auto image = (attachment.kind == TeleQQ::AttachmentKind::Image);
+	const auto thumbnail = image
+		? ImageLocation(
+			DownloadLocation{ PlainUrlLocation{ attachment.url } },
+			800,
+			600)
+		: ImageLocation();
 	const auto webDocument = MTP_webDocumentNoProxy(
 		MTP_string(attachment.url),
 		MTP_int(size > 2147483647 ? 0 : int(size)),
@@ -343,8 +360,18 @@ void ApplyTeleqqAvatar(
 		MTP_vector<MTPDocumentAttribute>(attributes));
 	const auto document = session->data().documentFromWeb(
 		webDocument,
-		ImageLocation(),
+		thumbnail,
 		ImageLocation());
+	auto thumbs = MTPVector<MTPPhotoSize>();
+	if (image) {
+		thumbs = MTP_vector<MTPPhotoSize>(
+			1,
+			MTP_photoSize(
+				MTP_string("m"),
+				MTP_int(800),
+				MTP_int(600),
+				MTP_int(0)));
+	}
 	return MTP_document(
 		MTP_flags(0),
 		MTP_long(document->id),
@@ -353,7 +380,7 @@ void ApplyTeleqqAvatar(
 		MTP_int(base::unixtime::now()),
 		MTP_string(mime),
 		MTP_long(size),
-		MTPVector<MTPPhotoSize>(),
+		thumbs,
 		MTPVector<MTPVideoSize>(),
 		MTP_int(0),
 		MTP_vector<MTPDocumentAttribute>(attributes));
@@ -424,7 +451,8 @@ void ApplyTeleqqAvatar(
 void EnsureTeleqqUser(
 		not_null<Main::Session*> session,
 		UserId id,
-		const QString &name) {
+		const QString &name,
+		const QString &avatarUrl = QString()) {
 	session->data().processUser(MTP_user(
 		MTP_flags(
 			MTPDuser::Flag::f_first_name
@@ -449,9 +477,14 @@ void EnsureTeleqqUser(
 		MTPint(),
 		MTPlong(),
 		MTPlong()));
+	ApplyTeleqqAvatar(
+		session->data().user(id),
+		avatarUrl.isEmpty()
+			? TeleqqPrivateAvatarUrl(QString::number(id.bare))
+			: avatarUrl);
 }
 
-[[nodiscard]] QString TeleqqProjectionKey(const TeleQQ::Message &message) {
+[[nodiscard]] QString TeleqqMessageKey(const TeleQQ::Message &message) {
 	return message.chatId
 		+ u":"_q
 		+ (!message.id.isEmpty()
@@ -459,25 +492,25 @@ void EnsureTeleqqUser(
 			: (QString::number(message.time) + u":"_q + message.text));
 }
 
-void ProjectTeleqqMessageToNativeHistory(const TeleQQ::Message &message) {
+MsgId ProjectTeleqqMessageToNativeHistory(const TeleQQ::Message &message) {
 	if (!Core::App().teleqqModeActive()) {
-		return;
+		return 0;
 	}
 	const auto session = Core::App().maybePrimarySession();
 	const auto store = Core::App().teleqqStore();
 	if (!session || !store || message.chatId.isEmpty()) {
-		return;
+		return 0;
 	}
 	const auto chat = store->chat(message.chatId);
 	if (!chat) {
-		return;
+		return 0;
 	}
-	static auto projected = QSet<QString>();
-	const auto key = TeleqqProjectionKey(message);
-	if (projected.contains(key)) {
-		return;
+	static auto projected = QHash<QString, MsgId>();
+	const auto key = TeleqqMessageKey(message);
+	const auto projectedIt = projected.constFind(key);
+	if (projectedIt != projected.cend()) {
+		return projectedIt.value();
 	}
-	projected.insert(key);
 
 	const auto bareId = TeleqqBareId(chat->peerId.isEmpty() ? chat->id : chat->peerId);
 	const auto peer = (chat->kind == TeleQQ::ChatKind::Group)
@@ -490,7 +523,11 @@ void ProjectTeleqqMessageToNativeHistory(const TeleQQ::Message &message) {
 		if (chat->kind == TeleQQ::ChatKind::Group
 			&& !message.authorId.isEmpty()) {
 			const auto userId = UserId(TeleqqBareId(message.authorId));
-			EnsureTeleqqUser(session, userId, message.author);
+			EnsureTeleqqUser(
+				session,
+				userId,
+				message.author,
+				TeleqqPrivateAvatarUrl(message.authorId));
 			return MTPPeer(MTP_peerUser(MTP_long(userId.bare)));
 		}
 		return peer;
@@ -515,6 +552,73 @@ void ProjectTeleqqMessageToNativeHistory(const TeleQQ::Message &message) {
 		}
 		session->data().sendHistoryChangeNotifications();
 		session->data().chatsListChanged(nullptr);
+		projected.insert(key, item->id);
+		return item->id;
+	}
+	return 0;
+}
+
+[[nodiscard]] QString TeleqqJsonId(
+		const QJsonObject &object,
+		const QString &key) {
+	const auto value = object.value(key);
+	if (value.isString()) {
+		return value.toString();
+	} else if (value.isDouble()) {
+		return QString::number(qint64(value.toDouble()));
+	}
+	return QString();
+}
+
+[[nodiscard]] bool TeleqqTypingNotice(const QJsonObject &event) {
+	const auto postType = event.value(u"post_type"_q).toString();
+	const auto noticeType = event.value(u"notice_type"_q).toString();
+	const auto subType = event.value(u"sub_type"_q).toString();
+	const auto eventType = event.value(u"event_type"_q).toString();
+	const auto statusText = event.value(u"status_text"_q).toString()
+		+ event.value(u"text"_q).toString()
+		+ event.value(u"status"_q).toString();
+	if (postType != u"notice"_q) {
+		return false;
+	}
+	return noticeType == u"input_status"_q
+		|| subType == u"input_status"_q
+		|| subType == u"typing"_q
+		|| eventType == u"input_status"_q
+		|| statusText.contains(u"输入"_q);
+}
+
+void ProjectTeleqqTypingEvent(const QJsonObject &event) {
+	if (!TeleqqTypingNotice(event)) {
+		return;
+	}
+	const auto session = Core::App().maybePrimarySession();
+	if (!session) {
+		return;
+	}
+	const auto user = TeleqqJsonId(event, u"user_id"_q);
+	const auto group = TeleqqJsonId(event, u"group_id"_q);
+	if (user.isEmpty()) {
+		return;
+	}
+	const auto userId = UserId(TeleqqBareId(user));
+	EnsureTeleqqUser(
+		session,
+		userId,
+		event.value(u"nickname"_q).toString(),
+		TeleqqPrivateAvatarUrl(user));
+	if (!group.isEmpty()) {
+		const auto chatId = ChatId(TeleqqBareId(group));
+		session->updates().applyUpdateNoPtsCheck(MTP_updateChatUserTyping(
+			MTP_long(chatId.bare),
+			MTPPeer(MTP_peerUser(MTP_long(userId.bare))),
+			MTP_sendMessageTypingAction()));
+	} else {
+		session->updates().applyUpdateNoPtsCheck(MTP_updateUserTyping(
+			MTP_flags(0),
+			MTP_long(userId.bare),
+			MTPint(),
+			MTP_sendMessageTypingAction()));
 	}
 }
 
@@ -828,6 +932,7 @@ void Application::run() {
 	_private->teleqq->setEventCallback([](QJsonObject event) {
 		DEBUG_LOG(("TeleQQ: event %1").arg(QString::fromUtf8(
 			QJsonDocument(event).toJson(QJsonDocument::Compact))));
+		ProjectTeleqqTypingEvent(event);
 	});
 	_private->teleqq->setMessageCallback([=](
 			TeleQQ::Chat chat,

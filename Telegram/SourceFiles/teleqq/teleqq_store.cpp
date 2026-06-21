@@ -97,7 +97,7 @@ void Store::addMessage(Chat chat, Message message) {
 	}
 	chat.lastMessage = message.text;
 	chat.updatedAt = message.time;
-	if (!message.outgoing) {
+	if (!message.outgoing && !message.historical) {
 		const auto existing = _chats.find(chat.id);
 		chat.unread = (existing == _chats.end()) ? 1 : (existing->second.unread + 1);
 	}

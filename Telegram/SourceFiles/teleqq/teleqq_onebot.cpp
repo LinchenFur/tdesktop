@@ -32,9 +32,23 @@ namespace {
 }
 
 [[nodiscard]] QString FirstUrl(const QJsonObject &data) {
-	for (const auto &key : { u"url"_q, u"file"_q }) {
+	for (const auto &key : {
+			u"url"_q,
+			u"file"_q,
+			u"file_url"_q,
+			u"download_url"_q }) {
 		const auto value = data.value(key).toString();
 		if (LooksLikeUrl(value)) {
+			return value;
+		}
+	}
+	return QString();
+}
+
+[[nodiscard]] QString FirstFileId(const QJsonObject &data) {
+	for (const auto &key : { u"file_id"_q, u"file"_q }) {
+		const auto value = data.value(key).toString();
+		if (!value.isEmpty() && !LooksLikeUrl(value)) {
 			return value;
 		}
 	}
@@ -45,11 +59,20 @@ namespace {
 		const QJsonObject &data,
 		const QString &url,
 		const QString &fallback) {
-	for (const auto &key : { u"name"_q, u"file_name"_q, u"filename"_q }) {
+	for (const auto &key : {
+			u"name"_q,
+			u"file_name"_q,
+			u"filename"_q,
+			u"display"_q }) {
 		const auto value = data.value(key).toString();
 		if (!value.isEmpty()) {
 			return value;
 		}
+	}
+	const auto file = data.value(u"file"_q).toString();
+	if (!file.isEmpty() && !LooksLikeUrl(file)) {
+		const auto fromFile = QUrl(file).fileName();
+		return fromFile.isEmpty() ? file : fromFile;
 	}
 	const auto fromUrl = QUrl(url).fileName();
 	return fromUrl.isEmpty() ? fallback : fromUrl;
@@ -127,11 +150,12 @@ namespace {
 }
 
 [[nodiscard]] QString PrivateAvatarUrl(const QString &userId) {
-	return u"https://q1.qlogo.cn/g?b=qq&nk=%1&s=100"_q.arg(userId);
+	return u"https://q.qlogo.cn/headimg_dl?dst_uin=%1&spec=640&img_type=jpg"_q
+		.arg(userId);
 }
 
 [[nodiscard]] QString GroupAvatarUrl(const QString &groupId) {
-	return u"https://p.qlogo.cn/gh/%1/%1/100"_q.arg(groupId);
+	return u"https://p.qlogo.cn/gh/%1/%1/640"_q.arg(groupId);
 }
 
 [[nodiscard]] std::vector<Attachment> Attachments(const QJsonArray &segments) {
@@ -150,7 +174,8 @@ namespace {
 			: AttachmentKind::File;
 		const auto data = segment.value(u"data"_q).toObject();
 		const auto url = FirstUrl(data);
-		if (url.isEmpty()) {
+		const auto id = FirstFileId(data);
+		if (url.isEmpty() && id.isEmpty()) {
 			continue;
 		}
 		const auto name = FirstFileName(
@@ -159,6 +184,7 @@ namespace {
 			(kind == AttachmentKind::Image) ? u"image.jpg"_q : u"file"_q);
 		result.push_back({
 			.kind = kind,
+			.id = id,
 			.url = url,
 			.name = name,
 			.mime = MimeFromName(name, kind),

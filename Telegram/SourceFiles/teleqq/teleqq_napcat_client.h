@@ -35,6 +35,7 @@ public:
 	using ResponseCallback = std::function<void(ApiResponse)>;
 	using RosterCallback = std::function<void(RosterResult)>;
 	using HistoryCallback = std::function<void(HistoryResult)>;
+	using ResolvedMessageCallback = std::function<void(Message)>;
 
 	explicit NapcatClient(QObject *parent = nullptr);
 
@@ -67,6 +68,9 @@ public:
 private:
 	void handleStatus(const QString &status);
 	void handleTextFrame(const QByteArray &bytes);
+	void resolveMessageFiles(
+		Message message,
+		ResolvedMessageCallback callback);
 	void scheduleReconnect();
 	[[nodiscard]] QUrl endpointWithToken() const;
 

@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QUrlQuery>
 #include <QtCore/qglobal.h>
 
+#include <memory>
 #include <utility>
 
 namespace TeleQQ {
@@ -46,6 +47,43 @@ constexpr auto kTokenEnv = "TELEQQ_NAPCAT_TOKEN";
 		.error = !message.isEmpty() ? message : wording,
 		.echo = object.value(u"echo"_q).toString(),
 	};
+}
+
+[[nodiscard]] bool LooksLikeUrl(const QString &value) {
+	return value.startsWith(u"http://"_q, Qt::CaseInsensitive)
+		|| value.startsWith(u"https://"_q, Qt::CaseInsensitive);
+}
+
+[[nodiscard]] QString ResolvedFileUrl(const QJsonObject &data) {
+	for (const auto &key : { u"url"_q, u"file"_q }) {
+		const auto value = data.value(key).toString();
+		if (LooksLikeUrl(value)) {
+			return value;
+		}
+	}
+	return QString();
+}
+
+[[nodiscard]] QString ResolvedFileName(
+		const QJsonObject &data,
+		const QString &fallback) {
+	for (const auto &key : { u"file_name"_q, u"name"_q, u"filename"_q }) {
+		const auto value = data.value(key).toString();
+		if (!value.isEmpty()) {
+			return value;
+		}
+	}
+	return fallback;
+}
+
+[[nodiscard]] qint64 ResolvedFileSize(const QJsonObject &data) {
+	for (const auto &key : { u"file_size"_q, u"size"_q }) {
+		const auto value = data.value(key);
+		if (value.isDouble()) {
+			return qint64(value.toDouble());
+		}
+	}
+	return 0;
 }
 
 } // namespace
@@ -180,32 +218,122 @@ void NapcatClient::requestHistory(
 		params,
 		[chat = std::move(chat),
 		 selfId = _selfId,
+		 client = this,
 		 callback = std::move(callback)](
 				ApiResponse response) mutable {
-			auto result = HistoryResult{
+			auto result = std::make_shared<HistoryResult>(HistoryResult{
 				.chat = chat,
 				.response = response,
-			};
+			});
 			const auto data = response.data.toObject();
 			const auto messages = data.value(u"messages"_q).toArray();
-			if (response.ok) {
-				result.messages.reserve(messages.size());
-				for (const auto &entry : messages) {
-					if (entry.isObject()) {
-						auto message = OneBot::MessageFromHistory(
-							chat.kind,
-							chat.peerId,
-							entry.toObject(),
-							selfId);
-						message.historical = true;
-						result.messages.push_back(std::move(message));
-					}
+			if (!response.ok || messages.empty()) {
+				if (callback) {
+					callback(std::move(*result));
+				}
+				return;
+			}
+			auto parsed = std::make_shared<std::vector<Message>>();
+			parsed->reserve(messages.size());
+			for (const auto &entry : messages) {
+				if (entry.isObject()) {
+					auto message = OneBot::MessageFromHistory(
+						chat.kind,
+						chat.peerId,
+						entry.toObject(),
+						selfId);
+					message.historical = true;
+					parsed->push_back(std::move(message));
 				}
 			}
-			if (callback) {
-				callback(std::move(result));
+			if (parsed->empty()) {
+				if (callback) {
+					callback(std::move(*result));
+				}
+				return;
 			}
+			result->messages.resize(parsed->size());
+			auto callbackPtr = std::make_shared<HistoryCallback>(
+				std::move(callback));
+			auto pending = std::make_shared<int>(int(parsed->size()));
+			auto finish = std::make_shared<std::function<void()>>();
+			*finish = [result, callbackPtr, pending] {
+				if (*pending != 0 || !*callbackPtr) {
+					return;
+				}
+				auto done = std::move(*callbackPtr);
+				*callbackPtr = nullptr;
+				done(std::move(*result));
+			};
+			for (auto index = 0; index != int(parsed->size()); ++index) {
+				client->resolveMessageFiles(
+					std::move((*parsed)[index]),
+					[result, pending, finish, index](Message resolved) {
+						result->messages[index] = std::move(resolved);
+						--*pending;
+						(*finish)();
+					});
+			}
+			(*finish)();
 		});
+}
+
+void NapcatClient::resolveMessageFiles(
+		Message message,
+		ResolvedMessageCallback callback) {
+	auto unresolved = std::vector<int>();
+	for (auto i = 0; i != int(message.attachments.size()); ++i) {
+		const auto &attachment = message.attachments[i];
+		if (attachment.url.isEmpty() && !attachment.id.isEmpty()) {
+			unresolved.push_back(i);
+		}
+	}
+	if (unresolved.empty()) {
+		if (callback) {
+			callback(std::move(message));
+		}
+		return;
+	}
+
+	auto resolved = std::make_shared<Message>(std::move(message));
+	auto pending = std::make_shared<int>(int(unresolved.size()));
+	auto callbackPtr = std::make_shared<ResolvedMessageCallback>(
+		std::move(callback));
+	auto finish = std::make_shared<std::function<void()>>();
+	*finish = [resolved, pending, callbackPtr] {
+		if (*pending != 0 || !*callbackPtr) {
+			return;
+		}
+		auto done = std::move(*callbackPtr);
+		*callbackPtr = nullptr;
+		done(std::move(*resolved));
+	};
+	for (const auto index : unresolved) {
+		const auto fileId = resolved->attachments[index].id;
+		call(
+			u"get_file"_q,
+			QJsonObject{ { u"file"_q, fileId } },
+			[resolved, pending, finish, index](ApiResponse response) {
+				if (response.ok && response.data.isObject()) {
+					const auto data = response.data.toObject();
+					auto &attachment = resolved->attachments[index];
+					const auto url = ResolvedFileUrl(data);
+					if (!url.isEmpty()) {
+						attachment.url = url;
+					}
+					const auto name = ResolvedFileName(data, attachment.name);
+					if (!name.isEmpty()) {
+						attachment.name = name;
+					}
+					const auto size = ResolvedFileSize(data);
+					if (size > 0) {
+						attachment.size = size;
+					}
+				}
+				--*pending;
+				(*finish)();
+			});
+	}
 }
 
 void NapcatClient::setStatusCallback(StatusCallback callback) {
@@ -277,9 +405,15 @@ void NapcatClient::handleTextFrame(const QByteArray &bytes) {
 	const auto postType = object.value(u"post_type"_q).toString();
 	if ((postType == u"message"_q || postType == u"message_sent"_q)
 		&& _messageCallback) {
-		_messageCallback(
-			OneBot::ChatFromMessageEvent(object),
-			OneBot::MessageFromEvent(object, _selfId));
+		auto chat = OneBot::ChatFromMessageEvent(object);
+		auto message = OneBot::MessageFromEvent(object, _selfId);
+		resolveMessageFiles(
+			std::move(message),
+			[this, chat = std::move(chat)](Message resolved) mutable {
+				if (_messageCallback) {
+					_messageCallback(chat, std::move(resolved));
+				}
+			});
 	}
 }
 

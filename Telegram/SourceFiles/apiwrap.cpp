@@ -3410,9 +3410,24 @@ void ApiWrap::requestHistory(
 						[](const TeleQQ::Message &a, const TeleQQ::Message &b) {
 							return a.time < b.time;
 						});
+					auto messageIds = std::vector<MsgId>();
+					messageIds.reserve(result.messages.size());
 					for (auto &message : result.messages) {
+						if (const auto id
+								= Core::ProjectTeleqqMessageToNativeHistory(
+									message)) {
+							messageIds.push_back(id);
+						}
 						store->addMessage(result.chat, std::move(message));
 					}
+					std::sort(begin(messageIds), end(messageIds));
+					messageIds.erase(
+						std::unique(begin(messageIds), end(messageIds)),
+						end(messageIds));
+					history->messages().addSlice(
+						std::move(messageIds),
+						{ 0, ServerMaxMsgId },
+						int(result.messages.size()));
 					finish();
 				});
 			return 0;

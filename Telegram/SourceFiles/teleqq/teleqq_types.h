@@ -41,6 +41,7 @@ enum class AttachmentKind {
 
 struct Attachment {
 	AttachmentKind kind = AttachmentKind::File;
+	QString id;
 	QString url;
 	QString name;
 	QString mime;

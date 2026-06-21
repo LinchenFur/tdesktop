@@ -8,9 +8,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "base/timer.h"
+#include "data/data_msg_id.h"
 #include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtproto_proxy_data.h"
 #include "window/window_separate_id.h"
+
+#include <QtCore/QString>
 
 class History;
 
@@ -108,6 +111,7 @@ class Instance;
 namespace TeleQQ {
 class NapcatClient;
 class Store;
+struct Message;
 } // namespace TeleQQ
 
 namespace Webrtc {
@@ -132,6 +136,10 @@ enum class QuitReason {
 };
 
 extern const char kOptionSkipUrlSchemeRegister[];
+
+[[nodiscard]] QString TeleqqMessageKey(const TeleQQ::Message &message);
+[[nodiscard]] MsgId ProjectTeleqqMessageToNativeHistory(
+	const TeleQQ::Message &message);
 
 class Application final : public QObject {
 public:
