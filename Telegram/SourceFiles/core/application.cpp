@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer_id.h"
 #include "data/data_session.h"
 #include "data/data_download_manager.h"
+#include "data/data_history_messages.h"
 #include "base/battery_saving.h"
 #include "base/event_filter.h"
 #include "base/invoke_queued.h"
@@ -313,9 +314,12 @@ void ProjectTeleqqMessageToNativeHistory(const TeleQQ::Message &message) {
 	const auto peer = (chat->kind == TeleQQ::ChatKind::Group)
 		? MTPPeer(MTP_peerChat(MTP_long(ChatId(bareId).bare)))
 		: MTPPeer(MTP_peerUser(MTP_long(UserId(bareId).bare)));
-	const auto from = message.outgoing
-		? peerToMTP(session->userPeerId())
-		: peer;
+	const auto from = [&] {
+		if (message.outgoing) {
+			return MTPPeer(peerToMTP(session->userPeerId()));
+		}
+		return peer;
+	}();
 	const auto localFlags = MessageFlag::Local
 		| (message.outgoing ? MessageFlag::Outgoing : MessageFlag())
 		| (!message.outgoing && !message.historical
