@@ -30,6 +30,9 @@ namespace {
 	if (!next.lastMessage.isEmpty()) {
 		current.lastMessage = next.lastMessage;
 	}
+	if (!next.avatarUrl.isEmpty()) {
+		current.avatarUrl = next.avatarUrl;
+	}
 	if (next.updatedAt > 0) {
 		current.updatedAt = next.updatedAt;
 	}
@@ -93,6 +96,17 @@ void Store::addMessage(Chat chat, Message message) {
 	upsertChat(std::move(chat));
 
 	auto &list = _messages[message.chatId];
+	if (!message.id.isEmpty()) {
+		const auto duplicate = std::find_if(
+			begin(list),
+			end(list),
+			[&](const Message &existing) {
+				return existing.id == message.id;
+			});
+		if (duplicate != end(list)) {
+			return;
+		}
+	}
 	list.push_back(message);
 	emitMessageAdded(list.back());
 }

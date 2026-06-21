@@ -160,6 +160,52 @@ void NapcatClient::requestGroupList(RosterCallback callback) {
 	});
 }
 
+void NapcatClient::requestHistory(
+		Chat chat,
+		int count,
+		HistoryCallback callback) {
+	auto params = QJsonObject{
+		{ u"message_seq"_q, u"0"_q },
+		{ u"count"_q, count },
+	};
+	if (chat.kind == ChatKind::Group) {
+		params.insert(u"group_id"_q, chat.peerId);
+	} else {
+		params.insert(u"user_id"_q, chat.peerId);
+	}
+	call(
+		(chat.kind == ChatKind::Group)
+			? u"get_group_msg_history"_q
+			: u"get_friend_msg_history"_q,
+		params,
+		[chat = std::move(chat), callback = std::move(callback)](
+				ApiResponse response) mutable {
+			auto result = HistoryResult{
+				.chat = chat,
+				.response = response,
+			};
+			const auto data = response.data.toObject();
+			const auto messages = data.value(u"messages"_q).toArray();
+			if (response.ok) {
+				result.messages.reserve(messages.size());
+				for (const auto &entry : messages) {
+					if (entry.isObject()) {
+						auto message = OneBot::MessageFromHistory(
+							chat.kind,
+							chat.peerId,
+							entry.toObject(),
+							QString());
+						message.historical = true;
+						result.messages.push_back(std::move(message));
+					}
+				}
+			}
+			if (callback) {
+				callback(std::move(result));
+			}
+		});
+}
+
 void NapcatClient::setStatusCallback(StatusCallback callback) {
 	_statusCallback = std::move(callback);
 }

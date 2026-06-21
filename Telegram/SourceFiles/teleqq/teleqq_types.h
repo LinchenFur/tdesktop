@@ -28,6 +28,7 @@ struct Chat {
 	QString title;
 	QString subtitle;
 	QString lastMessage;
+	QString avatarUrl;
 	qint64 updatedAt = 0;
 	int unread = 0;
 };
@@ -40,6 +41,7 @@ struct Message {
 	QJsonArray segments;
 	qint64 time = 0;
 	bool outgoing = false;
+	bool historical = false;
 };
 
 struct ApiResponse {
@@ -52,6 +54,12 @@ struct ApiResponse {
 
 struct RosterResult {
 	std::vector<Chat> chats;
+	ApiResponse response;
+};
+
+struct HistoryResult {
+	Chat chat;
+	std::vector<Message> messages;
 	ApiResponse response;
 };
 

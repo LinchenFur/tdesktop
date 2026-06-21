@@ -22,6 +22,11 @@ namespace OneBot {
 [[nodiscard]] Message MessageFromEvent(
 	const QJsonObject &object,
 	const QString &selfId = QString());
+[[nodiscard]] Message MessageFromHistory(
+	ChatKind kind,
+	const QString &peerId,
+	const QJsonObject &object,
+	const QString &selfId = QString());
 [[nodiscard]] QJsonObject SendTextParams(
 	ChatKind kind,
 	const QString &peerId,
@@ -29,4 +34,3 @@ namespace OneBot {
 
 } // namespace OneBot
 } // namespace TeleQQ
-

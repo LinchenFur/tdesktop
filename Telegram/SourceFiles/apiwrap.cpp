@@ -99,6 +99,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/download_manager_mtproto.h"
 #include "storage/file_upload.h"
 #include "storage/storage_account.h"
+#include "teleqq/teleqq_napcat_client.h"
+#include "teleqq/teleqq_onebot.h"
+#include "teleqq/teleqq_store.h"
+
+#include <algorithm>
+#include <optional>
 
 namespace {
 
@@ -117,6 +123,53 @@ constexpr auto kStatsSessionKillTimeout = 10 * crl::time(1000);
 using PhotoFileLocationId = Data::PhotoFileLocationId;
 using DocumentFileLocationId = Data::DocumentFileLocationId;
 using UpdatedFileReferences = Data::UpdatedFileReferences;
+
+[[nodiscard]] BareId TeleqqBareId(const QString &id) {
+	auto ok = false;
+	auto result = id.toULongLong(&ok);
+	if (!ok || !result) {
+		result = qHash(id);
+	}
+	result &= PeerId::kChatTypeMask;
+	return result ? result : 1;
+}
+
+[[nodiscard]] std::optional<TeleQQ::Chat> TeleqqChatForPeer(
+		not_null<PeerData*> peer) {
+	const auto store = Core::App().teleqqStore();
+	if (!Core::App().teleqqModeActive() || !store) {
+		return std::nullopt;
+	}
+	const auto isGroup = peer->isChat();
+	const auto nativeBare = isGroup
+		? peerToChat(peer->id).bare
+		: peerToUser(peer->id).bare;
+	for (const auto &chat : store->chats()) {
+		if ((chat.kind == TeleQQ::ChatKind::Group) != isGroup) {
+			continue;
+		}
+		if (TeleqqBareId(chat.peerId.isEmpty() ? chat.id : chat.peerId)
+			== nativeBare) {
+			return chat;
+		}
+	}
+	return std::nullopt;
+}
+
+[[nodiscard]] QString TeleqqResponseMessageId(
+		const TeleQQ::ApiResponse &response) {
+	if (response.data.isObject()) {
+		const auto value = response.data.toObject().value(u"message_id"_q);
+		if (value.isString()) {
+			return value.toString();
+		} else if (value.isDouble()) {
+			return QString::number(qint64(value.toDouble()));
+		}
+	} else if (response.data.isDouble()) {
+		return QString::number(qint64(response.data.toDouble()));
+	}
+	return response.echo;
+}
 
 [[nodiscard]] std::shared_ptr<ChatHelpers::Show> ShowForPeer(
 		not_null<PeerData*> peer) {
@@ -3332,6 +3385,41 @@ void ApiWrap::requestHistory(
 		return;
 	}
 
+	if (Core::App().teleqqModeActive()) {
+		const auto chat = TeleqqChatForPeer(peer);
+		const auto client = Core::App().teleqqClient();
+		const auto store = Core::App().teleqqStore();
+		if (!chat || !client || !store) {
+			return;
+		}
+		auto &histories = history->owner().histories();
+		const auto requestType = Data::Histories::RequestType::History;
+		_historyRequests.emplace(key);
+		histories.sendRequest(history, requestType, [=](Fn<void()> finish) {
+			client->requestHistory(
+				*chat,
+				30,
+				[=](TeleQQ::HistoryResult result) {
+					_historyRequests.remove(key);
+					LOG(("TeleQQ: loaded %1 history messages for %2").arg(
+						QString::number(int(result.messages.size())),
+						result.chat.id));
+					std::sort(
+						begin(result.messages),
+						end(result.messages),
+						[](const TeleQQ::Message &a, const TeleQQ::Message &b) {
+							return a.time < b.time;
+						});
+					for (auto &message : result.messages) {
+						store->addMessage(result.chat, std::move(message));
+					}
+					finish();
+				});
+			return 0;
+		});
+		return;
+	}
+
 	const auto prepared = Api::PrepareHistoryRequest(peer, messageId, slice);
 	auto &histories = history->owner().histories();
 	const auto requestType = Data::Histories::RequestType::History;
@@ -4211,6 +4299,36 @@ void ApiWrap::sendMessage(
 	const auto history = message.action.history;
 	const auto peer = history->peer;
 	auto &textWithTags = message.textWithTags;
+
+	if (Core::App().teleqqModeActive()) {
+		const auto chat = TeleqqChatForPeer(peer);
+		const auto client = Core::App().teleqqClient();
+		const auto store = Core::App().teleqqStore();
+		const auto text = textWithTags.text.trimmed();
+		if (!chat || !client || !store || text.isEmpty()) {
+			return;
+		}
+		client->sendTextMessage(
+			chat->kind,
+			chat->peerId,
+			text,
+			[chat = *chat, text, store](TeleQQ::ApiResponse response) {
+				if (!response.ok) {
+					LOG(("TeleQQ: send message failed %1").arg(response.error));
+					return;
+				}
+				store->addMessage(chat, TeleQQ::Message{
+					.id = TeleqqResponseMessageId(response),
+					.chatId = chat.id,
+					.author = u"我"_q,
+					.text = text,
+					.segments = TeleQQ::OneBot::TextSegments(text),
+					.time = base::unixtime::now(),
+					.outgoing = true,
+				});
+			});
+		return;
+	}
 
 	auto action = message.action;
 	action.generateLocal = true;

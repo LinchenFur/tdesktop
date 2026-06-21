@@ -61,6 +61,34 @@ namespace {
 	return StringField(sender, u"user_id"_q);
 }
 
+[[nodiscard]] QString PrivateAvatarUrl(const QString &userId) {
+	return u"https://q1.qlogo.cn/g?b=qq&nk=%1&s=100"_q.arg(userId);
+}
+
+[[nodiscard]] QString GroupAvatarUrl(const QString &groupId) {
+	return u"https://p.qlogo.cn/gh/%1/%1/100"_q.arg(groupId);
+}
+
+[[nodiscard]] Message MessageFromObject(
+		const Chat &chat,
+		const QJsonObject &object,
+		const QString &selfId) {
+	const auto sender = object.value(u"sender"_q).toObject();
+	const auto userId = StringField(object, u"user_id"_q);
+	const auto raw = object.value(u"raw_message"_q).toString();
+	const auto text = RenderMessage(object.value(u"message"_q));
+	const auto message = object.value(u"message"_q);
+	return {
+		.id = StringField(object, u"message_id"_q),
+		.chatId = chat.id,
+		.author = BestSenderName(sender),
+		.text = !text.isEmpty() ? text : raw,
+		.segments = message.isArray() ? message.toArray() : TextSegments(raw),
+		.time = qint64(object.value(u"time"_q).toDouble()),
+		.outgoing = !selfId.isEmpty() && userId == selfId,
+	};
+}
+
 } // namespace
 
 QString PrivateChatId(const QString &userId) {
@@ -110,6 +138,7 @@ Chat ChatFromFriend(const QJsonObject &object) {
 		.peerId = peerId,
 		.title = title,
 		.subtitle = peerId,
+		.avatarUrl = PrivateAvatarUrl(peerId),
 	};
 }
 
@@ -126,6 +155,7 @@ Chat ChatFromGroup(const QJsonObject &object) {
 		.subtitle = count.isDouble()
 			? QString::number(qint64(count.toDouble())) + u" 人"_q
 			: u"群聊"_q,
+		.avatarUrl = GroupAvatarUrl(peerId),
 	};
 }
 
@@ -145,6 +175,7 @@ Chat ChatFromMessageEvent(const QJsonObject &object) {
 			? (u"群 "_q + peerId)
 			: (!senderName.isEmpty() ? senderName : (u"QQ "_q + peerId)),
 		.subtitle = isGroup ? senderName : peerId,
+		.avatarUrl = isGroup ? GroupAvatarUrl(peerId) : PrivateAvatarUrl(peerId),
 	};
 }
 
@@ -152,20 +183,28 @@ Message MessageFromEvent(
 		const QJsonObject &object,
 		const QString &selfId) {
 	const auto chat = ChatFromMessageEvent(object);
-	const auto sender = object.value(u"sender"_q).toObject();
-	const auto userId = StringField(object, u"user_id"_q);
-	const auto raw = object.value(u"raw_message"_q).toString();
-	const auto text = RenderMessage(object.value(u"message"_q));
-	const auto message = object.value(u"message"_q);
-	return {
-		.id = StringField(object, u"message_id"_q),
-		.chatId = chat.id,
-		.author = BestSenderName(sender),
-		.text = !text.isEmpty() ? text : raw,
-		.segments = message.isArray() ? message.toArray() : TextSegments(raw),
-		.time = qint64(object.value(u"time"_q).toDouble()),
-		.outgoing = !selfId.isEmpty() && userId == selfId,
+	return MessageFromObject(chat, object, selfId);
+}
+
+Message MessageFromHistory(
+		ChatKind kind,
+		const QString &peerId,
+		const QJsonObject &object,
+		const QString &selfId) {
+	auto chat = Chat{
+		.kind = kind,
+		.id = (kind == ChatKind::Group)
+			? GroupChatId(peerId)
+			: PrivateChatId(peerId),
+		.peerId = peerId,
+		.title = (kind == ChatKind::Group)
+			? (u"群 "_q + peerId)
+			: (u"QQ "_q + peerId),
+		.avatarUrl = (kind == ChatKind::Group)
+			? GroupAvatarUrl(peerId)
+			: PrivateAvatarUrl(peerId),
 	};
+	return MessageFromObject(chat, object, selfId);
 }
 
 QJsonObject SendTextParams(
@@ -184,4 +223,3 @@ QJsonObject SendTextParams(
 }
 
 } // namespace TeleQQ::OneBot
-

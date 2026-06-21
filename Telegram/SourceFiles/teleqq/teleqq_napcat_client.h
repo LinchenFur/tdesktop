@@ -34,6 +34,7 @@ public:
 	using MessageCallback = std::function<void(Chat, Message)>;
 	using ResponseCallback = std::function<void(ApiResponse)>;
 	using RosterCallback = std::function<void(RosterResult)>;
+	using HistoryCallback = std::function<void(HistoryResult)>;
 
 	explicit NapcatClient(QObject *parent = nullptr);
 
@@ -53,6 +54,10 @@ public:
 		ResponseCallback callback = nullptr);
 	void requestFriendList(RosterCallback callback);
 	void requestGroupList(RosterCallback callback);
+	void requestHistory(
+		Chat chat,
+		int count,
+		HistoryCallback callback);
 
 	void setStatusCallback(StatusCallback callback);
 	void addStatusCallback(StatusCallback callback);

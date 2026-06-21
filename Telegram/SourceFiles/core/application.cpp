@@ -40,6 +40,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_specific.h"
 #include "platform/platform_integration.h"
 #include "history/history.h"
+#include "history/history_item.h"
 #include "apiwrap.h"
 #include "api/api_updates.h"
 #include "calls/calls_instance.h"
@@ -99,6 +100,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QSet>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QMimeDatabase>
 #include <QtGui/QGuiApplication>
@@ -106,6 +108,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QWindow>
 
 #include <ksandbox.h>
+
+#include <algorithm>
 
 namespace Core {
 namespace {
@@ -231,6 +235,108 @@ const char kOptionSkipUrlSchemeRegister[] = "skip-url-scheme-register";
 		MTPint(), // schedule_repeat_period
 		MTPstring(), // summary_from_language
 		MTPRichMessage());
+}
+
+[[nodiscard]] MTPMessage TeleqqNativeMessage(
+		const TeleQQ::Chat &chat,
+		const TeleQQ::Message &message,
+		const MTPPeer &peer,
+		const MTPPeer &from) {
+	return MTP_message(
+		MTP_flags(MTPDmessage::Flag::f_from_id
+			| (message.outgoing ? MTPDmessage::Flag::f_out : MTPDmessage::Flag())),
+		MTP_int(0),
+		from,
+		MTPint(), // from_boosts_applied
+		MTPstring(), // from_rank
+		peer,
+		MTPPeer(), // saved_peer_id
+		MTPMessageFwdHeader(),
+		MTPlong(), // via_bot_id
+		MTPlong(), // via_business_bot_id
+		MTPPeer(), // guestchat_via_from
+		MTPMessageReplyHeader(),
+		MTP_int(TeleqqDate(message.time)),
+		MTP_string(message.text.isEmpty() ? TeleqqPreviewText(chat) : message.text),
+		MTP_messageMediaEmpty(),
+		MTPReplyMarkup(),
+		MTPVector<MTPMessageEntity>(),
+		MTPint(), // views
+		MTPint(), // forwards
+		MTPMessageReplies(),
+		MTPint(), // edit_date
+		MTPstring(),
+		MTPlong(),
+		MTPMessageReactions(),
+		MTPVector<MTPRestrictionReason>(),
+		MTPint(), // ttl_period
+		MTPint(), // quick_reply_shortcut_id
+		MTPlong(), // effect
+		MTPFactCheck(),
+		MTPint(), // report_delivery_until_date
+		MTPlong(), // paid_message_stars
+		MTPSuggestedPost(),
+		MTPint(), // schedule_repeat_period
+		MTPstring(), // summary_from_language
+		MTPRichMessage());
+}
+
+[[nodiscard]] QString TeleqqProjectionKey(const TeleQQ::Message &message) {
+	return message.chatId
+		+ u":"_q
+		+ (!message.id.isEmpty()
+			? message.id
+			: (QString::number(message.time) + u":"_q + message.text));
+}
+
+void ProjectTeleqqMessageToNativeHistory(const TeleQQ::Message &message) {
+	if (!Core::App().teleqqModeActive()) {
+		return;
+	}
+	const auto session = Core::App().maybePrimarySession();
+	const auto store = Core::App().teleqqStore();
+	if (!session || !store || message.chatId.isEmpty()) {
+		return;
+	}
+	const auto chat = store->chat(message.chatId);
+	if (!chat) {
+		return;
+	}
+	static auto projected = QSet<QString>();
+	const auto key = TeleqqProjectionKey(message);
+	if (projected.contains(key)) {
+		return;
+	}
+	projected.insert(key);
+
+	const auto bareId = TeleqqBareId(chat->peerId.isEmpty() ? chat->id : chat->peerId);
+	const auto peer = (chat->kind == TeleQQ::ChatKind::Group)
+		? MTPPeer(MTP_peerChat(MTP_long(ChatId(bareId).bare)))
+		: MTPPeer(MTP_peerUser(MTP_long(UserId(bareId).bare)));
+	const auto from = message.outgoing
+		? peerToMTP(session->userPeerId())
+		: peer;
+	const auto localFlags = MessageFlag::Local
+		| (message.outgoing ? MessageFlag::Outgoing : MessageFlag())
+		| (!message.outgoing && !message.historical
+			? MessageFlag::ClientSideUnread
+			: MessageFlag());
+	const auto item = session->data().addNewMessage(
+		session->data().nextLocalMessageId(),
+		TeleqqNativeMessage(*chat, message, peer, from),
+		localFlags,
+		message.historical ? NewMessageType::Existing : NewMessageType::Unread);
+	if (item) {
+		if (message.historical) {
+			item->history()->messages().addExisting(
+				item->id,
+				{ 0, ServerMaxMsgId });
+		} else {
+			item->history()->messages().addNew(item->id);
+		}
+		session->data().sendHistoryChangeNotifications();
+		session->data().chatsListChanged(nullptr);
+	}
 }
 
 void ApplyTeleqqDialog(
@@ -503,7 +609,7 @@ void Application::run() {
 	DEBUG_LOG(("Application Info: inited..."));
 
 	_private->teleqqStore = std::make_unique<TeleQQ::Store>();
-	_private->teleqqStore->setChatUpdatedCallback([](TeleQQ::Chat chat) {
+	_private->teleqqStore->setChatUpdatedCallback([=](TeleQQ::Chat chat) {
 		DEBUG_LOG(("TeleQQ: chat %1 title %2 unread %3").arg(
 			chat.id,
 			chat.title,
@@ -515,6 +621,7 @@ void Application::run() {
 		DEBUG_LOG(("TeleQQ: stored message %1 in %2").arg(
 			message.id,
 			message.chatId));
+		ProjectTeleqqMessageToNativeHistory(message);
 	});
 
 	_private->teleqq = std::make_unique<TeleQQ::NapcatClient>(this);
