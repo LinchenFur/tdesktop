@@ -2,6 +2,8 @@ name: MacOS Packaged.
 
 on:
   push:
+    branches-ignore:
+      - teleqq-napcat
     paths-ignore:
       - 'docs/**'
       - '**.md'

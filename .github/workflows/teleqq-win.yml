@@ -6,6 +6,10 @@ on:
     branches:
       - teleqq-napcat
 
+concurrency:
+  group: teleqq-windows-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows-x64-debug:
     name: Windows x64 Debug
@@ -89,6 +93,15 @@ jobs:
             ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
           key: ${{ runner.OS }}-x64-teleqq-qt-${{ env.CACHE_KEY }}
           restore-keys: ${{ runner.OS }}-x64-teleqq-qt-
+
+      - name: Build cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.TBUILD }}\${{ env.REPO_NAME }}\out
+          key: ${{ runner.OS }}-x64-teleqq-build-${{ github.ref_name }}-${{ hashFiles('Telegram/CMakeLists.txt', 'Telegram/SourceFiles/**', 'cmake/**', 'Telegram/build/**') }}
+          restore-keys: |
+            ${{ runner.OS }}-x64-teleqq-build-${{ github.ref_name }}-
+            ${{ runner.OS }}-x64-teleqq-build-
 
       - name: OpenSSL binary package
         shell: pwsh
